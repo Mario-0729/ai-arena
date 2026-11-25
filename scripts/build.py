@@ -7,7 +7,7 @@ import json
 import pathlib
 import re
 
-from step import load_control, progress, debate_path
+from step import CONTROLS, QUOTAS, debate_path, load_control, plan, progress
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEBATES = ROOT / "debates"
@@ -73,14 +73,34 @@ def parse(path: pathlib.Path) -> dict:
     return item
 
 
+def sort_key(stem):
+    """2026-11-26_153000-2 排在 -10 前面；同一秒開的多場照編號排。"""
+    m = re.match(r"(.+_\d+)(?:-(\d+))?$", stem)
+    return (m[1], int(m[2] or 0)) if m else (stem, 0)
+
+
 def live_status(c):
-    """目前這場（control.json 指定的那場）的狀態。"""
-    rounds, ended = progress(debate_path(c))
-    if ended:
+    """某一場的狀態（依它自己的控制檔）。"""
+    p = progress(debate_path(c))
+    if p["ended"]:
         status = "ended"
     else:
         status = {"run": "running", "pause": "paused", "end": "ending"}[c["cmd"]]
-    return {**c, "rounds": rounds, "status": status}
+    # next：下一步是誰（pro 正方、con 反方、verdict 主持人結算、none 沒有）
+    return {**c, "rounds": p["done"], "status": status, "next": plan(c)}
+
+
+def load_quota():
+    """每場各自存一份，取最新回報的那份。"""
+    best = None
+    for f in QUOTAS.glob("*.json"):
+        try:
+            q = json.loads(f.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if isinstance(q, dict) and (best is None or str(q.get("at", "")) > str(best.get("at", ""))):
+            best = q
+    return best
 
 
 STATUS_TEXT = {"ended": "", "running": "（進行中）", "paused": "（暫停）",
@@ -95,16 +115,25 @@ def write_readme(items):
 
 
 def main():
-    c = load_control()
-    live = live_status(c) if c else None
-    items = [parse(p) for p in sorted(DEBATES.glob("*.md"), reverse=True)]
+    states = {}
+    for f in CONTROLS.glob("*.json"):
+        c = load_control(f.stem)
+        if c:
+            states[c["id"]] = live_status(c)
+    # live：還沒結束的場次（剛按開始、還沒有戰況檔的也在裡面）
+    live = sorted((s for s in states.values() if s["status"] != "ended"),
+                  key=lambda s: sort_key(s["id"]), reverse=True)
+    paths = sorted(DEBATES.glob("*.md"), key=lambda p: sort_key(p.stem), reverse=True)
+    items = [parse(p) for p in paths]
     for d in items:
-        if live and d["id"] == live["id"]:
-            d["status"], d["max"] = live["status"], live["max"]
+        st = states.get(d["id"])
+        if st:
+            d["status"], d["max"] = st["status"], st["max"]
         else:
             d["status"] = "ended" if d["verdict"] else "stopped"
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps({"live": live, "debates": items}, ensure_ascii=False), encoding="utf-8")
+    data = {"live": live, "quota": load_quota(), "debates": items}
+    OUT.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     write_readme(items)
     print(f"寫入 {OUT}，共 {len(items)} 場")
 
