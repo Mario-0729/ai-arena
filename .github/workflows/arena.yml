@@ -1,0 +1,58 @@
+name: AI 吵架擂台
+
+on:
+  schedule:
+    - cron: "7 * * * *"   # 每小時第 7 分開一場（GitHub 排程常會延遲幾分鐘）
+  workflow_dispatch:       # 手動開打：Actions → AI 吵架擂台 → Run workflow
+
+permissions:
+  contents: write
+
+concurrency:
+  group: arena
+  cancel-in-progress: false
+
+jobs:
+  debate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安裝 Claude Code
+        run: npm install -g @anthropic-ai/claude-code --silent
+
+      - name: 開吵
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          mkdir -p debates
+          STAMP=$(TZ=Asia/Taipei date +%Y-%m-%d_%H%M)
+          FILE="debates/${STAMP}.md"
+          RECENT=$(ls -1 debates/*.md 2>/dev/null | sort | tail -n 30 | xargs -r -n1 head -n 1 | sed 's/^# //')
+          claude -p "$(cat prompt.md)
+
+          最近出過的題目（不要重複）：
+          ${RECENT:-（無）}" > "$FILE.tmp"
+          if [ ! -s "$FILE.tmp" ]; then echo "沒有產出內容"; exit 1; fi
+          mv "$FILE.tmp" "$FILE"
+
+      - name: 更新目錄並存檔
+        run: |
+          {
+            echo "# AI 吵架擂台"
+            echo
+            echo "每小時自動開打一場，最新的在最上面。"
+            echo
+            for f in $(ls -1 debates/*.md | sort -r); do
+              name=$(basename "$f" .md)
+              topic=$(head -n 1 "$f" | sed 's/^# //')
+              echo "- [${name}｜${topic}](${f})"
+            done
+          } > README.md
+          git config user.name "arena-bot"
+          git config user.email "arena-bot@users.noreply.github.com"
+          git add debates README.md
+          git commit -m "新的一場" || exit 0
+          git pull --rebase
+          git push
