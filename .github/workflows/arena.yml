@@ -1,7 +1,7 @@
 name: AI 吵架擂台
 
 # 由網頁的「開始／暫停／繼續／結束」觸發：網頁先改 control.json，再呼叫這裡。
-# 每次只做一步（打一回合、結算，或只把狀態更新到網頁），
+# 每次只做一步（打一回合、結算，或只把狀態更新到網頁），有新進度就觸發「部署網頁」，
 # 還要繼續就自己再觸發一次，直到暫停、結束或打滿回合上限。
 # 手動也可以：Actions → AI 吵架擂台 → Run workflow（會照 control.json 接著打）。
 on:
@@ -19,8 +19,6 @@ jobs:
   step:
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    outputs:
-      changed: ${{ steps.save.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,6 +54,12 @@ jobs:
           git push -q || { git pull --rebase -q && git push -q; }
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
+      - name: 有新進度就請「部署網頁」更新網站
+        if: steps.save.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main
+
       - name: 還要繼續就觸發下一步
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,28 +71,3 @@ jobs:
             gh workflow run arena.yml --ref main
           fi
 
-  # 有新進度就把 site/ 部署到 GitHub Pages
-  publish:
-    needs: step
-    if: needs.step.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    concurrency:
-      group: pages
-      cancel-in-progress: false
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-      - id: deploy
-        uses: actions/deploy-pages@v4

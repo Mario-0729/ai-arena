@@ -13,8 +13,8 @@ Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub A
 ## 檔案
 | 路徑 | 作用 |
 |---|---|
-| `.github/workflows/arena.yml` | 只由網頁（或手動 Run workflow）觸發，每次只做一步：打一回合或結算 → 轉檔 → commit → 還要繼續就自己再觸發一次 → 部署到 GitHub Pages。已沒有每小時排程 |
-| `.github/workflows/deploy.yml` | 改了 `site/index.html` 或 `scripts/` 推上 main 時重新部署到 GitHub Pages；也能手動執行（Actions → 部署網頁） |
+| `.github/workflows/arena.yml` | 只由網頁（或手動 Run workflow）觸發，每次只做一步：打一回合或結算 → 轉檔 → commit → 觸發「部署網頁」→ 還要繼續就自己再觸發一次。已沒有每小時排程 |
+| `.github/workflows/deploy.yml` | 部署到 GitHub Pages。辯論流程每步觸發、改了 `site/index.html` 或 `scripts/` 推上 main 時、或手動執行（Actions → 部署網頁） |
 | `control.json` | **只由網頁寫入**：`{"id","topic","cmd":"run/pause/end","max"}`，指定目前這場和指令 |
 | `prompt.md` | 正方、反方、主持人的規則。改玩法主要改這裡 |
 | `scripts/step.py` | 讀 control.json 決定這一步：`plan` 印出 round/verdict/close/none，`run` 執行（會呼叫 claude）。回合標題由程式寫，Claude 只寫內容 |

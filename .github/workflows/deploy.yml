@@ -1,7 +1,9 @@
 name: 部署網頁
 
-# 改了網頁或轉檔腳本就重新部署到 GitHub Pages；也可以在 Actions 手動按 Run workflow
-# （辯論流程用 GITHUB_TOKEN 推的 commit 不會觸發這裡，那邊自己會部署）
+# 部署到 GitHub Pages。三種情況會跑：
+# 1. 改了網頁或轉檔腳本推上 main
+# 2. 辯論流程每打完一步會觸發這裡
+# 3. 手動：Actions → 部署網頁 → Run workflow
 on:
   push:
     branches: [main]
@@ -15,6 +17,7 @@ permissions:
   pages: write
   id-token: write
 
+# 排隊中的部署會被更新的取代，只會部署最新的
 concurrency:
   group: pages
   cancel-in-progress: false
