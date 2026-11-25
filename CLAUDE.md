@@ -47,6 +47,7 @@ Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub A
 - 網址：https://mario-0729.github.io/ai-arena/
 - 需要 repo 是 Public，且 Settings → Pages → Source 選「GitHub Actions」（只要設一次）。
 - 網址公開，誰都看得到；但沒有 GitHub 權杖按不了控制按鈕。
+- 部署偶爾出現「No artifacts named "github-pages"」：剛上傳完就部署，GitHub 還沒登記好。所以 deploy.yml 把上傳、部署分成兩個工作，部署失敗會等 20 秒重試一次。網頁只是慢一點更新，辯論本身不受影響。
 - 曾考慮 Cloudflare Pages（免費、repo 可維持私人），Mario 選了改公開走 GitHub Pages。之後想改回私人，就得換回 Cloudflare 或付費 GitHub Pro。
 
 ## 限制與成本

@@ -23,18 +23,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # 上傳和部署分成兩個工作（GitHub 官方範本的做法）。
+  # 同一個工作裡剛上傳完馬上部署，偶爾會找不到檔案（No artifacts named "github-pages"）。
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - name: 轉檔
         run: python3 scripts/build.py
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url || steps.retry.outputs.page_url }}
+    steps:
       - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - name: 等一下再試
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 20
+      - id: retry
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
