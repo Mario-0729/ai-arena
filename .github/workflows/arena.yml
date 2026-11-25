@@ -41,7 +41,7 @@ jobs:
         run: echo "action=$(python3 scripts/step.py plan "$ID")" | tee -a "$GITHUB_OUTPUT"
 
       - name: 安裝 Claude Code
-        if: contains(fromJSON('["pro", "con", "verdict"]'), steps.plan.outputs.action)
+        if: contains(fromJSON('["speech", "score", "verdict"]'), steps.plan.outputs.action)
         run: npm install -g @anthropic-ai/claude-code --silent
 
       - name: 開吵
