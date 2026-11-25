@@ -7,7 +7,7 @@ import json
 import pathlib
 import re
 
-from step import CONTROLS, QUOTAS, debate_path, load_control, plan, progress
+from step import CONTROLS, QUOTAS, debate_path, load_control, plan_step, progress
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEBATES = ROOT / "debates"
@@ -17,7 +17,16 @@ README = ROOT / "README.md"
 SPEAKER = re.compile(r"^\*\*(.+?)\*\*\s*[：:]\s*(.*)$")
 
 
+SCORE_HEAD = re.compile(r"^### 評審打分(?:：正方 (\d+)｜反方 (\d+))?")
+QUOTE = re.compile(r"^[-•＊*]\s*(正方|反方)\s*[（(]([^）)]*)[）)]\s*[：:]\s*「(.+)」\s*$")
+VERDICT_NAMES = ("結算", "評審判決")
+
+
 def parse(path: pathlib.Path) -> dict:
+    """讀一場戰況。新舊格式都吃：
+    新：## 立論／質詢…，發言 **正方｜立論**：…，打分 ### 評審打分：正方 8｜反方 7，最後 ## 評審判決
+    舊：## 第 N 回合，發言 **正方**：…，最後 ## 主持人結算
+    """
     text = path.read_text(encoding="utf-8").strip()
     lines = text.splitlines()
     stem = path.stem  # 2026-11-26_0226
@@ -27,7 +36,7 @@ def parse(path: pathlib.Path) -> dict:
     title = ""
     sections = []
     current = None
-    msg = None
+    item = None  # 正在收文字的發言或打分
 
     for line in lines:
         s = line.rstrip()
@@ -35,9 +44,9 @@ def parse(path: pathlib.Path) -> dict:
             title = s[2:].strip().strip("*「」\"")
             continue
         if s.startswith("## "):
-            current = {"name": s[3:].strip(), "msgs": [], "text": []}
+            current = {"name": s[3:].strip(), "items": [], "text": []}
             sections.append(current)
-            msg = None
+            item = None
             continue
         if current is None:
             # 舊格式：標題下一行的粗體辯題
@@ -45,29 +54,50 @@ def parse(path: pathlib.Path) -> dict:
             if t and title in ("", "辯題"):
                 title = t
             continue
-        sm = SPEAKER.match(s.strip())
-        if sm and "結算" not in current["name"]:
-            msg = {"who": sm[1].strip(), "text": sm[2].strip()}
-            current["msgs"].append(msg)
-        elif msg is not None:
-            msg["text"] = (msg["text"] + "\n" + s).strip()
-        else:
+        if any(v in current["name"] for v in VERDICT_NAMES):
             current["text"].append(s)
+            continue
+        sc = SCORE_HEAD.match(s)
+        if sc:
+            item = {"type": "score", "pro": int(sc[1]) if sc[1] else None,
+                    "con": int(sc[2]) if sc[2] else None, "text": ""}
+            current["items"].append(item)
+            continue
+        sm = SPEAKER.match(s.strip())
+        if sm and ("｜" in sm[1] or len(sm[1]) <= 10):
+            who, _, role = sm[1].partition("｜")
+            item = {"type": "msg", "who": who.strip(), "role": role.strip(), "text": sm[2].strip()}
+            current["items"].append(item)
+        elif item is not None:
+            item["text"] = (item["text"] + "\n" + s).strip()
 
-    rounds = [
-        {"name": sec["name"], "msgs": sec["msgs"]}
-        for sec in sections
-        if sec["msgs"] and "結算" not in sec["name"]
-    ]
-    verdict_sec = next((sec for sec in sections if "結算" in sec["name"]), None)
-    verdict = "\n".join(verdict_sec["text"]).strip() if verdict_sec else ""
+    rounds = []
+    for sec in sections:
+        if any(v in sec["name"] for v in VERDICT_NAMES) or not sec["items"]:
+            continue
+        msgs = [{k: x[k] for k in ("who", "role", "text") if x.get(k)} for x in sec["items"] if x["type"] == "msg"]
+        rounds.append({"name": sec["name"], "msgs": msgs, "items": sec["items"]})
+
+    verdict_sec = next((sec for sec in sections if any(v in sec["name"] for v in VERDICT_NAMES)), None)
+    verdict_lines = verdict_sec["text"] if verdict_sec else []
+    quotes, rest = [], []
+    for v in verdict_lines:
+        q = QUOTE.match(v.strip())
+        if q:
+            quotes.append({"who": q[1], "stage": q[2].strip(), "text": q[3].replace("**", "").strip()})
+        elif not re.match(r"^\s*關鍵發言\s*[：:]?\s*$", v):
+            rest.append(v)
+    verdict = "\n".join(rest).strip()
     winner = ""
     wm = re.search(r"勝者[^：:]*[：:]\s*\**\s*([A-Za-z一-鿿]+)", verdict)
     if wm:
         winner = wm[1]
 
+    scores = [x for r in rounds for x in r["items"] if x["type"] == "score" and x["pro"] is not None]
     item = {"id": stem, "time": time, "title": title or "（未命名）", "rounds": rounds,
-            "verdict": verdict, "winner": winner}
+            "verdict": verdict, "winner": winner, "quotes": quotes,
+            "totals": {"pro": sum(x["pro"] for x in scores), "con": sum(x["con"] for x in scores),
+                       "n": len(scores)} if scores else None}
     if not rounds:
         item["raw"] = text
     return item
@@ -86,8 +116,10 @@ def live_status(c):
         status = "ended"
     else:
         status = {"run": "running", "pause": "paused", "end": "ending"}[c["cmd"]]
-    # next：下一步是誰（pro 正方、con 反方、verdict 主持人結算、none 沒有）
-    return {**c, "rounds": p["done"], "status": status, "next": plan(c)}
+    # next：下一步（{"kind": "speech", "stage", "who", "role"}、score、verdict…），暫停時照「繼續」會做的算
+    nxt = plan_step({**c, "cmd": "run" if c["cmd"] == "pause" else c["cmd"]})
+    return {**c, "stage": p["stage"], "free": p["free"], "speeches": p["speeches"],
+            "status": status, "next": nxt}
 
 
 def load_quota():
