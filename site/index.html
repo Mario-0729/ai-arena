@@ -6,27 +6,25 @@
 <meta name="robots" content="noindex,nofollow">
 <title>AI 吵架擂台</title>
 <style>
-:root{--bg:#0d0f14;--panel:#161a22;--panel2:#1d2230;--line:#2a3142;--text:#e9ecf2;--muted:#8b93a7;--accent:#ff5d3a;--gold:#ffc53d}
-@media (prefers-color-scheme: light){:root{--bg:#f4f5f8;--panel:#fff;--panel2:#f0f2f6;--line:#e2e5ec;--text:#161a22;--muted:#69718a;--gold:#b7791f}}
+:root{--bg:#0d0f14;--panel:#161a22;--panel2:#1d2230;--line:#2a3142;--text:#e9ecf2;--muted:#8b93a7;--accent:#ff5d3a;--gold:#ffc53d;--pro:#4c8dff;--con:#ff5a6e;--ok:#37c28a}
+@media (prefers-color-scheme: light){:root{--bg:#f4f5f8;--panel:#fff;--panel2:#f0f2f6;--line:#e2e5ec;--text:#161a22;--muted:#69718a;--gold:#b7791f;--pro:#2563eb;--con:#dc2649;--ok:#14895b}}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 -apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;-webkit-text-size-adjust:100%}
 a{color:inherit;text-decoration:none}
+button,textarea,select,input{font:inherit;color:inherit}
 .wrap{max-width:720px;margin:0 auto;padding:16px 16px calc(48px + env(safe-area-inset-bottom))}
 header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 18px}
 .logo{font-weight:900;font-size:24px;letter-spacing:.5px}
 .logo span{color:var(--accent)}
 .sub{color:var(--muted);font-size:13px}
-.pill{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--panel2);color:var(--muted);white-space:nowrap}
+.pill{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--panel2);color:var(--c,var(--muted));white-space:nowrap}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
 .card h2.h{margin:0 0 10px;font-size:13px;color:var(--muted)}
-.stat{background:var(--panel2);border-radius:12px;padding:8px 2px;text-align:center;min-width:0}
-.stat b{display:block;font-size:20px;color:var(--c,var(--text))}
-.stat small{display:block;color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card h2.h:not(:first-child){margin-top:20px}
 .item{display:block;padding:14px 0;border-top:1px solid var(--line)}
 .item:first-child{border-top:0;padding-top:4px}
 .item .t{font-weight:700;line-height:1.45}
-.item .m{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px;color:var(--muted)}
+.item .m{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:4px;font-size:12px;color:var(--muted)}
 .win{font-weight:800;color:var(--c)}
 .back{display:inline-block;margin-bottom:12px;color:var(--muted);font-size:14px}
 .topic{font-size:21px;font-weight:800;line-height:1.4;margin:4px 0 10px}
@@ -46,6 +44,25 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;ma
 .nav{display:flex;justify-content:space-between;gap:8px;margin-top:4px}
 .nav a{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:14px;font-weight:700;text-align:center}
 .nav a.off{visibility:hidden}
+.now .t{font-weight:800;font-size:18px;line-height:1.45;display:block}
+.now .m{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px;font-size:13px;color:var(--muted)}
+.row{display:flex;gap:8px;margin-top:12px}
+.btn{flex:1;min-height:46px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);font-weight:800;font-size:16px;cursor:pointer;padding:0 12px}
+.btn.go{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.stop{color:var(--con);border-color:var(--con)}
+.btn:disabled{opacity:.5;cursor:default}
+textarea,input[type=password],select{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:16px}
+textarea{min-height:84px;resize:vertical;display:block}
+label.sel{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:14px;color:var(--muted)}
+label.sel select{flex:1;width:auto}
+.note{margin-top:10px;font-size:13px;color:var(--muted)}
+.note.err{color:var(--con)}
+.note.ok{color:var(--ok)}
+.link{background:none;border:0;padding:0;color:var(--muted);text-decoration:underline;font-size:13px;cursor:pointer}
+.live{color:var(--muted);text-align:center}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--c);margin-right:6px;vertical-align:1px}
+.running .dot{animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.25}}
 footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
 </style>
 </head>
@@ -54,30 +71,43 @@ footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
   <header>
     <a href="#/">
       <div class="logo">AI <span>吵架</span>擂台</div>
-      <div class="sub">每小時自動開打一場</div>
+      <div class="sub">你出題，Claude 自己跟自己吵</div>
     </a>
     <div id="count" class="pill">載入中</div>
   </header>
   <main id="app"><div class="empty">擂台布置中…</div></main>
-  <footer>所有發言由 Claude 一人分飾五角生成，純屬娛樂</footer>
+  <footer>所有發言由 Claude 生成，純屬娛樂</footer>
 </div>
 <script>
+const REPO = "Mario-0729/ai-arena";
+const WORKFLOW = "arena.yml";
+const TOKEN_KEY = "arena-gh-token";
+const API = "https://api.github.com/repos/" + REPO;
+
 const PLAYERS = {
-  GPT: { color: "#10A37F", brand: "OpenAI" },
-  Gemini: { color: "#4285F4", brand: "Google" },
-  Grok: { color: "#8B8F98", brand: "xAI" },
-  DeepSeek: { color: "#4D6BFE", brand: "DeepSeek" },
-  Claude: { color: "#D97757", brand: "Anthropic" },
+  正方: "var(--pro)", 反方: "var(--con)",
+  // 舊玩法（五個 AI 角色）的場次
+  GPT: "#10A37F", Gemini: "#4285F4", Grok: "#8B8F98", DeepSeek: "#4D6BFE", Claude: "#D97757",
 };
-const player = (name) => PLAYERS[name] || { color: "#9b7bd6", brand: "" };
+const color = (name) => PLAYERS[name] || "#9b7bd6";
+
+const STATUS = {
+  running: { text: "進行中", c: "var(--ok)" },
+  paused: { text: "已暫停", c: "var(--gold)" },
+  ending: { text: "結算中", c: "var(--gold)" },
+  stopped: { text: "中斷", c: "var(--muted)" },
+  ended: { text: "已結束", c: "var(--muted)" },
+};
 
 const $ = (tag, attrs = {}, ...kids) => {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (k === "style") el.style.cssText = v;
-    else if (v != null && v !== false) el.setAttribute(k, v);
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "value") el.value = v;
+    else if (v != null && v !== false) el.setAttribute(k, v === true ? "" : v);
   }
-  for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : String(kid));
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
   return el;
 };
 
@@ -91,49 +121,259 @@ function rich(text) {
   return out;
 }
 
-let DATA = [];
+// ---------- 權杖（只存在這支手機的瀏覽器） ----------
+function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return MEM_TOKEN; } }
+function setToken(t) { MEM_TOKEN = t; try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+let MEM_TOKEN = "";
+
+async function gh(path, opts = {}) {
+  let res;
+  try {
+    res = await fetch(API + path, {
+      ...opts,
+      cache: "no-store",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: "Bearer " + getToken(),
+        "X-GitHub-Api-Version": "2022-11-28",
+        ...(opts.body ? { "Content-Type": "application/json" } : {}),
+      },
+    });
+  } catch (e) {
+    throw new Error("連不上 GitHub，請檢查網路");
+  }
+  if (res.ok) return res.status === 204 ? null : res.json();
+  const err = new Error(
+    res.status === 401 ? "權杖無效或已過期，請重新設定" :
+    res.status === 403 || res.status === 404 ? "權杖沒有這個 repo 的權限（Contents 和 Actions 都要選 Read and write）" :
+    "GitHub 回應錯誤 " + res.status);
+  err.status = res.status;
+  throw err;
+}
+
+const b64encode = (s) => { let bin = ""; new TextEncoder().encode(s).forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); };
+const b64decode = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
+
+async function readControl() {
+  try {
+    const f = await gh("/contents/control.json?ref=main");
+    return { ctrl: JSON.parse(b64decode(f.content)), sha: f.sha };
+  } catch (e) {
+    if (e.status === 404) {
+      await gh(""); // 分辨「檔案不存在」和「沒權限」
+      return { ctrl: null, sha: null };
+    }
+    throw e;
+  }
+}
+
+async function writeControl(ctrl, label) {
+  for (let i = 0; i < 2; i++) {
+    const { sha } = await readControl();
+    try {
+      await gh("/contents/control.json", {
+        method: "PUT",
+        body: JSON.stringify({
+          message: "控制：" + label,
+          content: b64encode(JSON.stringify(ctrl, null, 2) + "\n"),
+          branch: "main",
+          ...(sha ? { sha } : {}),
+        }),
+      });
+      return;
+    } catch (e) {
+      if (e.status !== 409 || i) throw e; // 409：剛好被改過，重抓一次
+    }
+  }
+}
+
+const dispatch = () => gh("/actions/workflows/" + WORKFLOW + "/dispatches", { method: "POST", body: JSON.stringify({ ref: "main" }) });
+
+function taipeiStamp() {
+  const p = {};
+  new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+    .formatToParts(new Date()).forEach((x) => { p[x.type] = x.value; });
+  return `${p.year}-${p.month}-${p.day}_${p.hour}${p.minute}${p.second}`;
+}
+
+// ---------- 狀態 ----------
+let DATA = [];      // 各場次（data.json）
+let LIVE = null;    // data.json 裡的目前這場（部署後才更新）
+let CTRL = null;    // GitHub 上的 control.json（有權杖才讀得到，最即時）
+let NOTE = null;    // { text, kind }
+let BUSY = false;
+let SHOW_TOKEN_FORM = false;
+let DRAFT = "";
+let MAX = "10";
+
+// 目前這場：以 control.json 為準，回合數以 data.json 為準
+function current() {
+  const base = CTRL || LIVE;
+  if (!base) return null;
+  const d = DATA.find((x) => x.id === base.id);
+  const rounds = d ? d.rounds.length : 0;
+  let status;
+  if (d && d.status === "ended") status = "ended";
+  else status = { run: "running", pause: "paused", end: "ending" }[base.cmd] || "paused";
+  return { ...base, rounds, status, debate: d };
+}
+
+async function act(kind) {
+  const cur = current();
+  let ctrl, label;
+  if (kind === "start") {
+    const topic = DRAFT.replace(/\s+/g, " ").trim();
+    if (!topic) { NOTE = { text: "先輸入辯題", kind: "err" }; return render(); }
+    if (cur && cur.status !== "ended" && !confirm("目前這場還沒結束，開新題目後它會停在這裡。確定要開新題目？")) return;
+    ctrl = { id: taipeiStamp(), topic: topic.slice(0, 200), cmd: "run", max: Number(MAX) };
+    label = "開始";
+  } else {
+    if (!cur) return;
+    if (kind === "end" && !confirm("確定要結束這場？主持人會直接結算。")) return;
+    ctrl = { id: cur.id, topic: cur.topic, max: cur.max, cmd: { pause: "pause", resume: "run", end: "end" }[kind] };
+    label = { pause: "暫停", resume: "繼續", end: "結束" }[kind];
+  }
+  BUSY = true; NOTE = { text: "送出中…", kind: "" }; render();
+  try {
+    await writeControl(ctrl, label);
+    await dispatch();
+    CTRL = ctrl;
+    if (kind === "start") DRAFT = "";
+    NOTE = { text: kind === "pause"
+      ? "已暫停。正在打的這回合會打完，之後停下。"
+      : "已送出。GitHub 排隊加上 Claude 思考，約 1 到 3 分鐘後網頁會更新。", kind: "ok" };
+  } catch (e) {
+    NOTE = { text: e.message, kind: "err" };
+  }
+  BUSY = false;
+  render();
+  schedulePoll();
+}
+
+async function saveToken(value) {
+  const t = value.trim();
+  if (!t) return;
+  setToken(t);
+  BUSY = true; NOTE = { text: "檢查權杖…", kind: "" }; render();
+  try {
+    await gh("");
+    CTRL = (await readControl()).ctrl;
+    SHOW_TOKEN_FORM = false;
+    NOTE = { text: "權杖可以用了", kind: "ok" };
+  } catch (e) {
+    setToken("");
+    NOTE = { text: e.message, kind: "err" };
+  }
+  BUSY = false;
+  render();
+}
+
+// ---------- 畫面 ----------
+function statusPill(status) {
+  const s = STATUS[status] || STATUS.ended;
+  return $("span", { class: "pill " + status, style: "--c:" + s.c }, $("span", { class: "dot" }), s.text);
+}
+
+function winnerSpan(d) {
+  if (!d.winner) return null;
+  return $("span", { class: "win", style: "--c:" + (d.winner === "平手" ? "var(--muted)" : color(d.winner)) },
+    d.winner === "平手" ? "平手" : "勝者 " + d.winner);
+}
+
+function controlCard() {
+  const token = getToken();
+  const cur = current();
+  const kids = [];
+
+  if (cur && cur.status !== "ended") {
+    const rounds = "第 " + cur.rounds + "／" + cur.max + " 回合";
+    kids.push($("h2", { class: "h" }, "目前這場"),
+      $("div", { class: "now" },
+        $("a", { class: "t", href: "#/d/" + cur.id }, cur.topic),
+        $("div", { class: "m" }, statusPill(cur.status), rounds)));
+    if (token) {
+      const btns = [];
+      if (cur.status === "running") btns.push($("button", { class: "btn", disabled: BUSY, onclick: () => act("pause") }, "暫停"));
+      if (cur.status === "paused") btns.push($("button", { class: "btn go", disabled: BUSY, onclick: () => act("resume") }, "繼續"));
+      if (cur.status !== "ending") btns.push($("button", { class: "btn stop", disabled: BUSY, onclick: () => act("end") }, "結束"));
+      if (btns.length) kids.push($("div", { class: "row" }, btns));
+    }
+  }
+
+  kids.push($("h2", { class: "h" }, "出新題目"));
+  if (token && !SHOW_TOKEN_FORM) {
+    kids.push(
+      $("textarea", { id: "topic", maxlength: 200, placeholder: "例如：早餐店的大冰奶該不該漲價", value: DRAFT,
+        oninput: (e) => { DRAFT = e.target.value; } }),
+      $("label", { class: "sel" }, "回合上限",
+        $("select", { onchange: (e) => { MAX = e.target.value; } },
+          ["3", "5", "10", "20"].map((n) => $("option", { value: n, selected: n === MAX }, n + " 回合")))),
+      $("div", { class: "row" }, $("button", { class: "btn go", disabled: BUSY, onclick: () => act("start") }, "開始")));
+  } else {
+    kids.push($("div", { class: "note" }, "要出題和控制，先貼上 GitHub 權杖。權杖只存在這支手機的瀏覽器，別人拿到網址也只能看。"));
+    const input = $("input", { type: "password", placeholder: "github_pat_…", autocomplete: "off", style: "margin-top:10px" });
+    kids.push(input, $("div", { class: "row" }, $("button", { class: "btn go", disabled: BUSY, onclick: () => saveToken(input.value) }, "儲存權杖")));
+  }
+
+  if (NOTE) kids.push($("div", { class: "note " + NOTE.kind }, NOTE.text));
+  if (token && !SHOW_TOKEN_FORM) {
+    kids.push($("div", { class: "note" },
+      $("button", { class: "link", onclick: () => { SHOW_TOKEN_FORM = true; NOTE = null; render(); } }, "換權杖"), "　",
+      $("button", { class: "link", onclick: () => { if (confirm("清除這支手機上的權杖？")) { setToken(""); CTRL = null; NOTE = null; render(); } } }, "清除權杖")));
+  }
+  return $("div", { class: "card" }, kids);
+}
 
 function listView() {
-  const wins = {};
-  DATA.forEach((d) => { if (d.winner) wins[d.winner] = (wins[d.winner] || 0) + 1; });
-  const board = Object.keys(PLAYERS).map((n) =>
-    $("div", { class: "stat", style: "--c:" + player(n).color }, $("b", {}, wins[n] || 0), $("small", {}, n)));
-  const items = DATA.map((d) => {
-    const w = d.winner ? player(d.winner) : null;
-    return $("a", { class: "item", href: "#/d/" + d.id },
+  const items = DATA.map((d) =>
+    $("a", { class: "item", href: "#/d/" + d.id },
       $("div", { class: "t" }, d.title),
-      $("div", { class: "m" }, d.time, w ? $("span", { class: "win", style: "--c:" + w.color }, "勝者 " + d.winner) : null));
-  });
+      $("div", { class: "m" }, d.time, d.status === "ended" ? winnerSpan(d) : statusPill(d.status))));
   return [
-    $("div", { class: "card" }, $("h2", { class: "h" }, "勝場排行"), $("div", { class: "stats" }, board)),
-    $("div", { class: "card" }, items.length ? items : $("div", { class: "empty" }, "還沒有任何一場，等下一個整點開打")),
+    controlCard(),
+    $("div", { class: "card" }, $("h2", { class: "h" }, "所有場次"),
+      items.length ? items : $("div", { class: "empty" }, "還沒有任何一場，出個題目開打吧")),
   ];
 }
 
 function detailView(id) {
   const i = DATA.findIndex((d) => d.id === id);
-  if (i < 0) return [$("a", { class: "back", href: "#/" }, "← 回列表"), $("div", { class: "card" }, $("div", { class: "empty" }, "找不到這場"))];
+  const cur = current();
+  if (i < 0) {
+    const waiting = cur && cur.id === id;
+    return [$("a", { class: "back", href: "#/" }, "← 回列表"),
+      $("div", { class: "card" }, waiting ? $("div", { class: "topic" }, cur.topic) : null,
+        $("div", { class: "empty" }, waiting ? "第 1 回合準備中，約 1 到 3 分鐘後出現" : "找不到這場"))];
+  }
   const d = DATA[i];
+  const status = cur && cur.id === d.id ? cur.status : d.status;
+  const who = [...new Set(d.rounds.flatMap((r) => r.msgs.map((m) => m.who)))];
   const head = $("div", { class: "card" },
     $("div", { class: "meta" }, d.time),
     $("div", { class: "topic" }, d.title),
-    $("div", { class: "roster" }, Object.keys(PLAYERS).map((n) => $("span", { class: "tag", style: "--c:" + player(n).color }, n))));
-  const body = [];
+    $("div", { class: "roster" }, who.map((n) => $("span", { class: "tag", style: "--c:" + color(n) }, n)),
+      status !== "ended" ? statusPill(status) : null));
   if (d.raw) {
-    body.push($("div", { class: "raw" }, rich(d.raw)));
+    head.append($("div", { class: "raw" }, rich(d.raw)));
   } else {
     d.rounds.forEach((r) => {
-      body.push($("div", { class: "round" }, r.name));
+      head.append($("div", { class: "round" }, r.name));
       r.msgs.forEach((m) => {
-        const p = player(m.who);
-        body.push($("div", { class: "msg", style: "--c:" + p.color },
+        head.append($("div", { class: "msg", style: "--c:" + color(m.who) },
           $("div", { class: "av" }, m.who.slice(0, 1)),
           $("div", { class: "bub" }, $("div", { class: "who" }, m.who), $("div", { class: "say" }, rich(m.text)))));
       });
     });
   }
-  head.append(...body);
   const out = [$("a", { class: "back", href: "#/" }, "← 回列表"), head];
+  const liveText = {
+    running: "正方、反方正在想第 " + (d.rounds.length + 1) + " 回合…",
+    paused: "暫停中，回列表按「繼續」接著打",
+    ending: "主持人結算中…",
+    stopped: "這場沒打完就換題了",
+  }[status];
+  if (liveText) out.push($("div", { class: "card live " + status }, liveText));
   if (d.verdict) out.push($("div", { class: "card verdict" }, $("h2", {}, "主持人結算"), $("div", { class: "say" }, rich(d.verdict))));
   const newer = DATA[i - 1], older = DATA[i + 1];
   out.push($("div", { class: "nav" },
@@ -142,24 +382,42 @@ function detailView(id) {
   return out;
 }
 
-function render() {
+function render(force = true) {
+  // 自動更新時，如果正在打字就先不重畫，免得鍵盤被收起來
+  const a = document.activeElement;
+  if (!force && a && /^(TEXTAREA|INPUT|SELECT)$/.test(a.tagName) && document.getElementById("app").contains(a)) return;
   const m = location.hash.match(/^#\/d\/(.+)$/);
   document.getElementById("app").replaceChildren(...(m ? detailView(decodeURIComponent(m[1])) : listView()));
 }
 
-async function load() {
+async function load(force = true) {
   try {
     const res = await fetch("data.json?t=" + Date.now(), { cache: "no-store" });
-    DATA = (await res.json()).debates || [];
+    const json = await res.json();
+    DATA = json.debates || [];
+    LIVE = json.live || null;
     document.getElementById("count").textContent = "共 " + DATA.length + " 場";
   } catch (e) {
     document.getElementById("count").textContent = "讀取失敗";
   }
-  render();
+  if (getToken()) {
+    try { CTRL = (await readControl()).ctrl; } catch (e) { NOTE = { text: e.message, kind: "err" }; }
+  }
+  render(force);
+}
+
+// 有場次在進行就每 15 秒更新一次
+let timer = null;
+function schedulePoll() {
+  clearTimeout(timer);
+  const cur = current();
+  if (cur && (cur.status === "running" || cur.status === "ending")) {
+    timer = setTimeout(async () => { await load(false); schedulePoll(); }, 15000);
+  }
 }
 
 addEventListener("hashchange", () => { render(); scrollTo(0, 0); });
-load();
+load().then(schedulePoll);
 </script>
 </body>
 </html>
