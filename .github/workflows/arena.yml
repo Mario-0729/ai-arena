@@ -33,7 +33,7 @@ jobs:
           claude -p "$(cat prompt.md)
 
           最近出過的題目（不要重複）：
-          ${RECENT:-（無）}" > "$FILE.tmp"
+          ${RECENT:-（無）}" > "$FILE.tmp" || { echo "Claude 回報錯誤："; cat "$FILE.tmp"; exit 1; }
           if [ ! -s "$FILE.tmp" ]; then echo "沒有產出內容"; exit 1; fi
           mv "$FILE.tmp" "$FILE"
 
