@@ -1,15 +1,15 @@
-"""擂台的一步：讀 control.json，決定下一個要發言的是誰，或做結算，或什麼都不做。
+"""擂台的一步：讀某一場的控制檔，決定下一個要發言的是誰，或做結算，或什麼都不做。
 
-control.json 只由網頁寫入，格式：
-  {"id": "2026-11-26_153000", "topic": "辯題", "cmd": "run|pause|end", "max": 10}
+每一場有自己的控制檔 controls/<id>.json，只由網頁寫入，格式：
+  {"id": "2026-11-26_153000-1", "topic": "辯題", "cmd": "run|pause|end", "max": 10}
   max 是回合上限；0 代表無限，打到按「結束」為止。
 
 用法：
-  python3 scripts/step.py plan   印出 pro / con / verdict / close / none
-  python3 scripts/step.py run    執行這一步（pro、con、verdict 會呼叫 claude）
+  python3 scripts/step.py plan <id>   印出 pro / con / verdict / close / none
+  python3 scripts/step.py run <id>    執行這一步（pro、con、verdict 會呼叫 claude）
 
 一步只有一個人發言（正方或反方），所以網頁可以一句一句看到。
-workflow 做完後再跑一次 plan，不是 none 就自己再觸發下一次。
+每一場只寫自己的檔案（debates/<id>.md、quota/<id>.json），所以很多場同時打也不會互相蓋掉。
 """
 import datetime
 import json
@@ -20,27 +20,29 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CONTROL = ROOT / "control.json"
+CONTROLS = ROOT / "controls"
 DEBATES = ROOT / "debates"
 PROMPT = ROOT / "prompt.md"
-QUOTA = ROOT / "quota.json"
+QUOTAS = ROOT / "quota"
 
 MAX_CAP = 30          # 有上限時，上限最多 30 回合
 UNLIMITED_SAFETY = 200  # 無限模式的保險：真的打到 200 回合就自動結算
 CONTEXT_ROUNDS = 6    # 發言時只給 Claude 看最近幾回合，避免越打越慢、越耗額度
-ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{4,6}$")
+ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{4,6}(-\d{1,2})?$")
 ROUND_HEAD = re.compile(r"^## 第 (\d+) 回合\s*$", re.M)
 VERDICT_RE = re.compile(r"^## 主持人結算", re.M)
 SIDE = {"pro": "正方", "con": "反方"}
 
 
-def load_control():
-    """讀 control.json，格式不對就當作沒有。"""
+def load_control(cid):
+    """讀 controls/<id>.json，id 或格式不對就當作沒有。"""
+    if not ID_RE.match(str(cid or "")):
+        return None
     try:
-        c = json.loads(CONTROL.read_text(encoding="utf-8"))
+        c = json.loads((CONTROLS / f"{cid}.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         return None
-    if not isinstance(c, dict) or not ID_RE.match(str(c.get("id", ""))):
+    if not isinstance(c, dict) or c.get("id") != cid:
         return None
     topic = " ".join(str(c.get("topic", "")).split())[:200]
     if not topic:
@@ -108,13 +110,15 @@ def context_for_verdict(text, limit=60000):
     return text[:4000] + "\n\n（中間省略）\n\n" + text[-(limit - 4000):]
 
 
-def save_quota(info):
-    """把 Claude 回報的額度狀態存起來，網頁會顯示。沒回報就保留上一次的。"""
+def save_quota(c, info):
+    """把 Claude 回報的額度狀態存在這一場自己的檔案，網頁取最新的一份顯示。"""
     if not info:
         return
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
-    QUOTA.write_text(json.dumps({"at": now.strftime("%Y-%m-%d %H:%M"), "info": info},
-                                ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    QUOTAS.mkdir(exist_ok=True)
+    (QUOTAS / f"{c['id']}.json").write_text(
+        json.dumps({"at": now.strftime("%Y-%m-%d %H:%M:%S"), "info": info}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8")
 
 
 def ask_claude(c, context, task):
@@ -137,7 +141,7 @@ def ask_claude(c, context, task):
             info = ev["rate_limit_info"]
         elif ev.get("type") == "result":
             result = ev
-    save_quota(info)
+    save_quota(c, info)
     out = (result or {}).get("result")
     if r.returncode != 0 or not result or result.get("is_error") or not isinstance(out, str) or not out.strip():
         print("Claude 回報錯誤：", file=sys.stderr)
@@ -199,7 +203,7 @@ def run(c):
 
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else ""
-    c = load_control()
+    c = load_control(sys.argv[2] if len(sys.argv) > 2 else "")
     if what == "plan":
         print(plan(c))
     elif what == "run":

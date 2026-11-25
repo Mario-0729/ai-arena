@@ -1,61 +1,72 @@
 name: AI 吵架擂台
 
-# 由網頁的「開始／暫停／繼續／結束」觸發：網頁先改 control.json，再呼叫這裡。
-# 每次只做一步（正方或反方講一段、結算，或只把狀態更新到網頁），有新進度就觸發「部署網頁」，
-# 還要繼續就自己再觸發一次，直到暫停、結束或打滿回合上限（無限模式要按結束才停）。
-# 手動也可以：Actions → AI 吵架擂台 → Run workflow（會照 control.json 接著打）。
+# 由網頁的「開始／暫停／繼續／結束」觸發：網頁先改 controls/<id>.json，再帶著場次 id 呼叫這裡。
+# 每次只做一步（正方或反方講一段、或結算），做完觸發「部署網頁」更新網站，
+# 還要繼續就帶同一個 id 再觸發自己，直到暫停、結束或打滿回合上限（無限模式要按結束才停）。
+#
+# 很多場可以同時打：每一場有自己的排隊通道（concurrency 用 id 分開），
+# 而且每一場只 commit 自己的檔案（debates/<id>.md、quota/<id>.json），不會互相蓋掉。
+# site/data.json 和 README.md 只由「部署網頁」統一產生。
 on:
   workflow_dispatch:
+    inputs:
+      id:
+        description: "場次 id（controls/ 裡的檔名，不含 .json）"
+        required: true
+        type: string
+
+run-name: 擂台 ${{ inputs.id }}
 
 permissions:
   contents: write
-  actions: write   # 讓這裡能觸發下一回合
+  actions: write   # 讓這裡能觸發下一步和部署
 
 concurrency:
-  group: arena
+  group: arena-${{ inputs.id }}
   cancel-in-progress: false
 
 jobs:
   step:
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    env:
+      ID: ${{ inputs.id }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main   # 拿執行當下最新的 control.json
+          ref: main   # 拿執行當下最新的控制檔
 
       - name: 判斷這一步要做什麼
         id: plan
-        run: echo "action=$(python3 scripts/step.py plan)" | tee -a "$GITHUB_OUTPUT"
+        run: echo "action=$(python3 scripts/step.py plan "$ID")" | tee -a "$GITHUB_OUTPUT"
 
       - name: 安裝 Claude Code
         if: contains(fromJSON('["pro", "con", "verdict"]'), steps.plan.outputs.action)
         run: npm install -g @anthropic-ai/claude-code --silent
 
       - name: 開吵
+        if: steps.plan.outputs.action != 'none'
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: python3 scripts/step.py run
+        run: python3 scripts/step.py run "$ID"
 
-      - name: 轉檔並存檔
-        id: save
+      - name: 存檔
         run: |
           git config user.name "arena-bot"
           git config user.email "arena-bot@users.noreply.github.com"
-          # 先拿最新的 control.json（打這回合時網頁可能按了暫停），狀態才會對
-          git pull --rebase --autostash -q
-          python3 scripts/build.py
-          git add debates README.md site/data.json $(ls quota.json 2>/dev/null)
-          if git diff --cached --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git commit -q -m "擂台進度"
-          git push -q || { git pull --rebase -q && git push -q; }
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+          mkdir -p debates quota
+          git add debates quota
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -q -m "擂台進度 $ID"
+          # 別場可能剛好也在推，改的是不同檔案，重抓再推就好
+          ok=0
+          for i in 1 2 3 4 5 6; do
+            if git pull --rebase -q && git push -q; then ok=1; break; fi
+            sleep $((i * 2))
+          done
+          [ "$ok" = 1 ] || { echo "推送一直失敗"; exit 1; }
 
-      - name: 有新進度就請「部署網頁」更新網站
-        if: steps.save.outputs.changed == 'true'
+      - name: 請「部署網頁」更新網站
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run deploy.yml --ref main
@@ -65,9 +76,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git pull --rebase -q
-          NEXT=$(python3 scripts/step.py plan)
+          NEXT=$(python3 scripts/step.py plan "$ID")
           echo "下一步：$NEXT"
           if [ "$NEXT" != "none" ]; then
-            gh workflow run arena.yml --ref main
+            gh workflow run arena.yml --ref main -f id="$ID"
           fi
-

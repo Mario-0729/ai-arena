@@ -1,9 +1,14 @@
 name: 部署網頁
 
-# 部署到 GitHub Pages。三種情況會跑：
+# 產生 site/data.json、README.md 並部署到 GitHub Pages。三種情況會跑：
 # 1. 改了網頁或轉檔腳本推上 main
-# 2. 辯論流程每打完一步會觸發這裡
+# 2. 辯論流程每打完一步、網頁每按一次按鈕都會觸發這裡
 # 3. 手動：Actions → 部署網頁 → Run workflow
+#
+# data.json 和 README.md 只由這裡寫，很多場同時打也不會搶著改。
+# 兩個工作各自排隊，排隊中的會被更新的取代（只做最新的）：
+# - build 很快（十幾秒），網頁上有權杖的手機讀的就是它 commit 的 data.json
+# - deploy 慢一點，給沒權杖、看網站的人
 on:
   push:
     branches: [main]
@@ -13,14 +18,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
-
-# 排隊中的部署會被更新的取代，只會部署最新的
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
   # 上傳和部署分成兩個工作（GitHub 官方範本的做法）。
@@ -28,12 +28,27 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: build-data
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
-      - name: 轉檔
-        run: python3 scripts/build.py
+      - name: 轉檔並存檔
+        run: |
+          python3 scripts/build.py
+          git config user.name "arena-bot"
+          git config user.email "arena-bot@users.noreply.github.com"
+          git add site/data.json README.md
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -q -m "更新網頁資料"
+          ok=0
+          for i in 1 2 3 4 5 6; do
+            if git pull --rebase -q && git push -q; then ok=1; break; fi
+            sleep $((i * 2))
+          done
+          [ "$ok" = 1 ] || { echo "推送一直失敗"; exit 1; }
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -42,6 +57,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url || steps.retry.outputs.page_url }}

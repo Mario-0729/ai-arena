@@ -79,6 +79,7 @@ label.sel select{flex:1;width:auto}
 .bar i{display:block;height:100%;border-radius:99px}
 .qsub{font-size:12px;color:var(--muted);margin-top:4px}
 .card.live.err{color:var(--con)}
+h2.sec{font-size:13px;color:var(--muted);margin:22px 4px 10px;font-weight:700}
 footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
 </style>
 </head>
@@ -100,6 +101,7 @@ const WORKFLOW = "arena.yml";
 const TOKEN_KEY = "arena-gh-token";
 const API = "https://api.github.com/repos/" + REPO;
 const POLL_MS = 10000;
+const MAX_ACTIVE = 20; // 最多同時打幾場（GitHub 免費最多同時 20 台機器）
 
 const PLAYERS = {
   正方: "var(--pro)", 反方: "var(--con)",
@@ -171,27 +173,24 @@ async function gh(path, opts = {}, raw = false) {
 const b64encode = (s) => { let bin = ""; new TextEncoder().encode(s).forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); };
 const b64decode = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
 
-async function readControl() {
+// 每一場有自己的控制檔 controls/<id>.json
+async function controlSha(id) {
   try {
-    const f = await gh("/contents/control.json?ref=main");
-    return { ctrl: JSON.parse(b64decode(f.content)), sha: f.sha };
+    return (await gh("/contents/controls/" + id + ".json?ref=main")).sha;
   } catch (e) {
-    if (e.status === 404) {
-      await gh(""); // 分辨「檔案不存在」和「沒權限」
-      return { ctrl: null, sha: null };
-    }
+    if (e.status === 404) return null;
     throw e;
   }
 }
 
 async function writeControl(ctrl, label) {
   for (let i = 0; i < 2; i++) {
-    const { sha } = await readControl();
+    const sha = await controlSha(ctrl.id);
     try {
-      await gh("/contents/control.json", {
+      await gh("/contents/controls/" + ctrl.id + ".json", {
         method: "PUT",
         body: JSON.stringify({
-          message: "控制：" + label,
+          message: "控制：" + label + " " + ctrl.id,
           content: b64encode(JSON.stringify(ctrl, null, 2) + "\n"),
           branch: "main",
           ...(sha ? { sha } : {}),
@@ -204,7 +203,8 @@ async function writeControl(ctrl, label) {
   }
 }
 
-const dispatch = () => gh("/actions/workflows/" + WORKFLOW + "/dispatches", { method: "POST", body: JSON.stringify({ ref: "main" }) });
+const dispatch = (id) => gh("/actions/workflows/" + WORKFLOW + "/dispatches",
+  { method: "POST", body: JSON.stringify({ ref: "main", inputs: { id } }) });
 
 function taipeiParts(date) {
   const p = {};
@@ -220,10 +220,10 @@ function taipeiStamp() {
 
 // ---------- 狀態 ----------
 let DATA = [];      // 各場次
-let LIVE = null;    // data.json 裡的目前這場
+let LIVE = [];      // 還沒結束的場次（data.json 的 live）
 let QUOTA = null;   // Claude 最近一次回報的額度
-let CTRL = null;    // GitHub 上的 control.json（有權杖才讀得到，最即時）
-let RUN = null;     // 最近一次「AI 吵架擂台」執行（有權杖才讀得到）
+let PENDING = {};   // 剛按的按鈕，GitHub 資料還沒跟上前先照這個顯示：id → { ctrl, at }
+let RUNS = {};      // 每一場最近一次執行（有權杖才讀得到）：id → run
 let NOTE = null;    // { text, kind }
 let BUSY = false;
 let SHOW_TOKEN_FORM = false;
@@ -242,10 +242,8 @@ function nextSpeaker(d, max) {
   return { who: "正方", round: rounds.length + 1 };
 }
 
-// 目前這場：以 control.json 為準，戰況以 data 為準
-function current() {
-  const base = CTRL || LIVE;
-  if (!base) return null;
+// 一場的即時狀態：剛按的按鈕優先，其次 data.json
+function view(base) {
   const d = DATA.find((x) => x.id === base.id);
   const done = d ? d.rounds.filter((r) => r.msgs.some((m) => m.who === "反方")).length : 0;
   let status;
@@ -254,36 +252,73 @@ function current() {
   return { ...base, max: Number(base.max) || 0, done, status, debate: d };
 }
 
-async function act(kind) {
-  const cur = current();
-  let ctrl, label;
-  if (kind === "start") {
-    const topic = DRAFT.replace(/\s+/g, " ").trim();
-    if (!topic) { NOTE = { text: "先輸入辯題", kind: "err" }; return render(); }
-    if (cur && cur.status !== "ended" && !confirm("目前這場還沒結束，開新題目後它會停在這裡。確定要開新題目？")) return;
-    ctrl = { id: taipeiStamp(), topic: topic.slice(0, 200), cmd: "run", max: Number(MAX) };
-    label = "開始";
-  } else {
-    if (!cur) return;
-    if (kind === "end" && !confirm("確定要結束這場？主持人會直接結算。")) return;
-    ctrl = { id: cur.id, topic: cur.topic, max: cur.max, cmd: { pause: "pause", resume: "run", end: "end" }[kind] };
-    label = { pause: "暫停", resume: "繼續", end: "結束" }[kind];
+// 還沒結束的場次（新的在上面）
+function actives() {
+  const byId = {};
+  LIVE.forEach((l) => { byId[l.id] = l; });
+  for (const [id, p] of Object.entries(PENDING)) {
+    const l = byId[id];
+    const synced = l ? l.cmd === p.ctrl.cmd : DATA.some((d) => d.id === id && d.verdict);
+    if (synced || Date.now() - p.at > 180000) delete PENDING[id];
+    else byId[id] = { ...(l || {}), ...p.ctrl };
   }
+  return Object.values(byId).map(view).filter((v) => v.status !== "ended")
+    .sort((a, b) => (a.id < b.id ? 1 : -1));
+}
+const findActive = (id) => actives().find((v) => v.id === id) || null;
+
+async function act(kind, id) {
+  if (kind === "start") return startMany();
+  const cur = findActive(id);
+  if (!cur) return;
+  if (kind === "end" && !confirm("確定要結束「" + cur.topic + "」？主持人會直接結算。")) return;
+  const ctrl = { id: cur.id, topic: cur.topic, max: cur.max, cmd: { pause: "pause", resume: "run", end: "end" }[kind] };
+  const label = { pause: "暫停", resume: "繼續", end: "結束" }[kind];
   BUSY = true; NOTE = { text: "送出中…", kind: "" }; render();
   try {
     await writeControl(ctrl, label);
-    await dispatch();
-    CTRL = ctrl;
-    RUN = null;
-    if (kind === "start") DRAFT = "";
+    await dispatch(ctrl.id);
+    PENDING[ctrl.id] = { ctrl, at: Date.now() };
+    delete RUNS[ctrl.id];
     NOTE = { text: {
-      start: "已送出，正方準備開口。",
       pause: "已暫停。正在講的那一段會講完，之後停下。",
       resume: "已送出，接著打。",
       end: "已送出，主持人準備結算。",
     }[kind], kind: "ok" };
   } catch (e) {
     NOTE = { text: e.message, kind: "err" };
+  }
+  BUSY = false;
+  render();
+  schedulePoll(1500);
+}
+
+// 一行一題，一次開很多場，同時打
+async function startMany() {
+  const lines = [...new Set(DRAFT.split(/\n+/).map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean))];
+  if (!lines.length) { NOTE = { text: "先輸入辯題，一行一題", kind: "err" }; return render(); }
+  const room = MAX_ACTIVE - actives().filter((v) => v.status !== "paused").length;
+  if (lines.length > room) {
+    NOTE = { text: `最多同時打 ${MAX_ACTIVE} 場，現在還能開 ${Math.max(0, room)} 場。可以先結束或暫停幾場。`, kind: "err" };
+    return render();
+  }
+  if (MAX === "0" && lines.length > 1 && !confirm(`${lines.length} 場無限辯論會一起燒額度，直到你一場一場按結束。確定？`)) return;
+  const stamp = taipeiStamp();
+  BUSY = true; render();
+  let ok = 0;
+  try {
+    for (const [i, topic] of lines.entries()) {
+      NOTE = { text: `送出中 ${i + 1}／${lines.length}…`, kind: "" }; render();
+      const ctrl = { id: lines.length > 1 ? `${stamp}-${i + 1}` : stamp, topic: topic.slice(0, 200), cmd: "run", max: Number(MAX) };
+      await writeControl(ctrl, "開始");
+      await dispatch(ctrl.id);
+      PENDING[ctrl.id] = { ctrl, at: Date.now() };
+      ok++;
+    }
+    DRAFT = "";
+    NOTE = { text: lines.length > 1 ? `${lines.length} 場同時開打。` : "已送出，正方準備開口。", kind: "ok" };
+  } catch (e) {
+    NOTE = { text: (ok ? `已開 ${ok} 場，第 ${ok + 1} 場失敗：` : "") + e.message, kind: "err" };
   }
   BUSY = false;
   render();
@@ -342,6 +377,7 @@ function ago(iso) {
 
 // 一句話說明現在在幹嘛
 function statusLine(cur) {
+  const RUN = RUNS[cur.id] || null;
   if (cur.status === "paused") return { text: "已暫停。按「繼續」接著打，按「結束」請主持人結算。" };
   const next = nextSpeaker(cur.debate, cur.max);
   const who = cur.status === "ending" ? "主持人" : next.who;
@@ -391,41 +427,45 @@ function quotaCard() {
   return $("div", { class: "card" }, kids);
 }
 
-function controlCard() {
-  const token = getToken();
-  const cur = current();
-  const kids = [];
+function controlButtons(cur) {
+  if (!getToken()) return null;
+  const btns = [];
+  if (cur.status === "running") btns.push($("button", { class: "btn", disabled: BUSY, onclick: () => act("pause", cur.id) }, "暫停"));
+  if (cur.status === "paused") btns.push($("button", { class: "btn go", disabled: BUSY, onclick: () => act("resume", cur.id) }, "繼續"));
+  if (cur.status !== "ending") btns.push($("button", { class: "btn stop", disabled: BUSY, onclick: () => act("end", cur.id) }, "結束"));
+  return btns.length ? $("div", { class: "row" }, btns) : null;
+}
 
-  if (cur && cur.status !== "ended") {
-    const rounds = cur.max ? `第 ${cur.done}／${cur.max} 回合打完` : `已打完 ${cur.done} 回合・無上限`;
-    kids.push($("h2", { class: "h" }, "目前這場"),
-      $("div", { class: "now" },
-        $("a", { class: "t", href: "#/d/" + cur.id }, cur.topic),
-        $("div", { class: "m" }, statusPill(cur.status), rounds)));
-    const line = statusLine(cur);
-    kids.push($("div", { class: "note status" + (line.err ? " err" : "") }, line.text,
-      line.link ? [" ", $("a", { href: line.link, target: "_blank", rel: "noopener", class: "link" }, "看原因")] : null));
-    // 最近兩段發言，加上「思考中」
-    const msgs = cur.debate ? cur.debate.rounds.flatMap((r) => r.msgs) : [];
-    const feed = $("div", { class: "feed" }, msgs.slice(-2).map(bubble));
-    if (cur.status === "running" || cur.status === "ending") {
-      feed.append(thinkingBubble(cur.status === "ending" ? "主持人" : nextSpeaker(cur.debate, cur.max).who));
-    }
-    if (feed.childNodes.length) kids.push(feed);
-    if (msgs.length > 2) kids.push($("a", { class: "more", href: "#/d/" + cur.id }, "看整場（" + msgs.length + " 段）→"));
-    if (token) {
-      const btns = [];
-      if (cur.status === "running") btns.push($("button", { class: "btn", disabled: BUSY, onclick: () => act("pause") }, "暫停"));
-      if (cur.status === "paused") btns.push($("button", { class: "btn go", disabled: BUSY, onclick: () => act("resume") }, "繼續"));
-      if (cur.status !== "ending") btns.push($("button", { class: "btn stop", disabled: BUSY, onclick: () => act("end") }, "結束"));
-      if (btns.length) kids.push($("div", { class: "row" }, btns));
-    }
+function statusNote(cur, cls = "note status") {
+  const line = statusLine(cur);
+  return $("div", { class: cls + (line.err ? " err" : "") }, line.text,
+    line.link ? [" ", $("a", { href: line.link, target: "_blank", rel: "noopener", class: "link" }, "看原因")] : null);
+}
+
+// 一場進行中的卡片：題目、狀態、最新一段、思考中、按鈕
+function activeCard(cur, compact) {
+  const rounds = cur.max ? `第 ${cur.done}／${cur.max} 回合打完` : `已打完 ${cur.done} 回合・無上限`;
+  const msgs = cur.debate ? cur.debate.rounds.flatMap((r) => r.msgs) : [];
+  const feed = $("div", { class: "feed" }, msgs.slice(compact ? -1 : -2).map(bubble));
+  if (cur.status === "running" || cur.status === "ending") {
+    feed.append(thinkingBubble(cur.status === "ending" ? "主持人" : nextSpeaker(cur.debate, cur.max).who));
   }
+  return $("div", { class: "card" },
+    $("div", { class: "now" },
+      $("a", { class: "t", href: "#/d/" + cur.id }, cur.topic),
+      $("div", { class: "m" }, statusPill(cur.status), rounds)),
+    statusNote(cur),
+    feed.childNodes.length ? feed : null,
+    msgs.length > (compact ? 1 : 2) ? $("a", { class: "more", href: "#/d/" + cur.id }, "看整場（" + msgs.length + " 段）→") : null,
+    controlButtons(cur));
+}
 
-  kids.push($("h2", { class: "h" }, "出新題目"));
+function newTopicCard() {
+  const token = getToken();
+  const kids = [$("h2", { class: "h" }, "出新題目")];
   if (token && !SHOW_TOKEN_FORM) {
     kids.push(
-      $("textarea", { id: "topic", maxlength: 200, placeholder: "例如：早餐店的大冰奶該不該漲價", value: DRAFT,
+      $("textarea", { id: "topic", placeholder: "一行一題，可以一次貼很多題，會同時開打\n例如：早餐店的大冰奶該不該漲價", value: DRAFT,
         oninput: (e) => { DRAFT = e.target.value; } }),
       $("label", { class: "sel" }, "回合上限",
         $("select", { onchange: (e) => { MAX = e.target.value; render(); } },
@@ -438,12 +478,11 @@ function controlCard() {
     const input = $("input", { type: "password", placeholder: "github_pat_…", autocomplete: "off", style: "margin-top:10px" });
     kids.push(input, $("div", { class: "row" }, $("button", { class: "btn go", disabled: BUSY, onclick: () => saveToken(input.value) }, "儲存權杖")));
   }
-
   if (NOTE) kids.push($("div", { class: "note " + NOTE.kind }, NOTE.text));
   if (token && !SHOW_TOKEN_FORM) {
     kids.push($("div", { class: "note" },
       $("button", { class: "link", onclick: () => { SHOW_TOKEN_FORM = true; NOTE = null; render(); } }, "換權杖"), "　",
-      $("button", { class: "link", onclick: () => { if (confirm("清除這支手機上的權杖？")) { setToken(""); CTRL = null; RUN = null; NOTE = null; render(); } } }, "清除權杖")));
+      $("button", { class: "link", onclick: () => { if (confirm("清除這支手機上的權杖？")) { setToken(""); RUNS = {}; PENDING = {}; NOTE = null; render(); } } }, "清除權杖")));
   }
   return $("div", { class: "card" }, kids);
 }
@@ -453,8 +492,12 @@ function listView() {
     $("a", { class: "item", href: "#/d/" + d.id },
       $("div", { class: "t" }, d.title),
       $("div", { class: "m" }, d.time, d.status === "ended" ? winnerSpan(d) : statusPill(d.status))));
+  const list = actives();
+  const running = list.filter((v) => v.status !== "paused").length;
   return [
-    controlCard(),
+    newTopicCard(),
+    list.length ? $("h2", { class: "sec" }, `進行中 ${list.length} 場`, running > 1 ? `（同時 ${running} 台機器在跑）` : "") : null,
+    list.map((v) => activeCard(v, list.length > 2)),
     quotaCard(),
     $("div", { class: "card" }, $("h2", { class: "h" }, "所有場次"),
       items.length ? items : $("div", { class: "empty" }, "還沒有任何一場，出個題目開打吧")),
@@ -463,8 +506,8 @@ function listView() {
 
 function detailView(id) {
   const i = DATA.findIndex((d) => d.id === id);
-  const cur = current();
-  const isCur = cur && cur.id === id;
+  const cur = findActive(id);
+  const isCur = !!cur;
   if (i < 0) {
     return [$("a", { class: "back", href: "#/" }, "← 回列表"),
       $("div", { class: "card" }, isCur ? $("div", { class: "topic" }, cur.topic) : null,
@@ -493,9 +536,7 @@ function detailView(id) {
   }
   const out = [$("a", { class: "back", href: "#/" }, "← 回列表"), head];
   if (isCur && status !== "ended") {
-    const line = statusLine(cur);
-    out.push($("div", { class: "card live" + (line.err ? " err" : "") }, line.text,
-      line.link ? [" ", $("a", { href: line.link, target: "_blank", rel: "noopener", class: "link" }, "看原因")] : null));
+    out.push($("div", { class: "card" }, statusNote(cur, "live"), controlButtons(cur)));
   } else if (status === "stopped") {
     out.push($("div", { class: "card live" }, "這場沒打完就換題了"));
   }
@@ -512,7 +553,8 @@ function render(force = true) {
   const a = document.activeElement;
   if (!force && a && /^(TEXTAREA|INPUT|SELECT)$/.test(a.tagName) && document.getElementById("app").contains(a)) return;
   const m = location.hash.match(/^#\/d\/(.+)$/);
-  document.getElementById("app").replaceChildren(...(m ? detailView(decodeURIComponent(m[1])) : listView()));
+  const parts = m ? detailView(decodeURIComponent(m[1])) : listView();
+  document.getElementById("app").replaceChildren(...parts.flat().filter(Boolean));
 }
 
 // 有權杖：直接從 GitHub 讀最新的 data.json（不用等網站部署，最即時）
@@ -521,14 +563,17 @@ async function load(force = true) {
   let json = null;
   if (getToken()) {
     try {
-      const [data, ctrl, runs] = await Promise.all([
+      const [data, runs] = await Promise.all([
         gh("/contents/site/data.json?ref=main", {}, true),
-        readControl(),
-        gh("/actions/workflows/" + WORKFLOW + "/runs?per_page=1"),
+        gh("/actions/workflows/" + WORKFLOW + "/runs?per_page=50"),
       ]);
       json = data;
-      CTRL = ctrl.ctrl;
-      RUN = (runs.workflow_runs || [])[0] || null;
+      // 每一場取最近一次執行（執行名稱是「擂台 <id>」，清單新的在前）
+      RUNS = {};
+      (runs.workflow_runs || []).forEach((r) => {
+        const m = /^擂台 (\S+)$/.exec(r.display_title || "");
+        if (m && !RUNS[m[1]]) RUNS[m[1]] = r;
+      });
     } catch (e) {
       NOTE = { text: e.message, kind: "err" };
     }
@@ -543,7 +588,7 @@ async function load(force = true) {
   }
   if (json) {
     DATA = json.debates || [];
-    LIVE = json.live || null;
+    LIVE = Array.isArray(json.live) ? json.live : json.live ? [json.live] : [];
     QUOTA = json.quota || null;
     document.getElementById("count").textContent = "共 " + DATA.length + " 場";
   }
@@ -554,8 +599,7 @@ async function load(force = true) {
 let timer = null;
 function schedulePoll(delay = POLL_MS) {
   clearTimeout(timer);
-  const cur = current();
-  if (cur && (cur.status === "running" || cur.status === "ending")) {
+  if (actives().some((v) => v.status === "running" || v.status === "ending")) {
     timer = setTimeout(async () => { await load(false); schedulePoll(); }, delay);
   }
 }
