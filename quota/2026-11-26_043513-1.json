@@ -1,17 +1,20 @@
 {
-  "at": "2026-11-26 04:37:05",
+  "at": "2026-11-26 04:37:35",
   "info": {
-    "status": "allowed",
+    "status": "allowed_warning",
     "resetsAt": 1795648800,
     "rateLimitType": "five_hour",
+    "utilization": 0.91,
     "overageStatus": "rejected",
     "overageDisabledReason": "org_level_disabled",
     "isUsingOverage": false,
+    "surpassedThreshold": 0.9,
     "unifiedWindows": {
       "five_hour": {
-        "utilization": 0.88,
+        "utilization": 0.91,
         "resetsAt": 1795648800,
-        "status": "allowed"
+        "status": "allowed_warning",
+        "surpassedThreshold": 0.9
       },
       "seven_day": {
         "utilization": 0.65,
