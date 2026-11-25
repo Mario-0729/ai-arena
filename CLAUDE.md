@@ -4,7 +4,7 @@
 Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub Actions 用 Claude Code（`claude -p`）讓 Claude 分成正方、反方自己跟自己辯論，一回合接一回合打，最後由主持人（也是 Claude）結算。網頁上可以暫停、繼續、結束。
 - 2026-11-26 起改成這個玩法。之前是每小時自動出題、一人分飾五個 AI（GPT、Gemini、Grok、DeepSeek、Claude），舊場次保留在 `debates/`，網頁照樣能看。
 - 跑的是 Mario 自己 Claude Pro 訂閱的額度（金鑰由 `claude setup-token` 產生），不是 API 付費。
-- 只給自己看，repo 保持 **Private**，不要改成公開。
+- repo 是 **Public**（2026-11-26 Mario 決定改公開，為了免費用 GitHub Pages 放網頁）。所以 repo 內容、Actions log 大家都看得到：不要把金鑰、個資寫進檔案或印在 log。
 
 ## 使用者
 - Mario 只有 iPhone，沒有電腦。需要他動手的步驟要寫成手機瀏覽器點得到的路徑。
@@ -13,8 +13,8 @@ Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub A
 ## 檔案
 | 路徑 | 作用 |
 |---|---|
-| `.github/workflows/arena.yml` | 只由網頁（或手動 Run workflow）觸發，每次只做一步：打一回合或結算 → 轉檔 → commit → 部署 → 還要繼續就自己再觸發一次。已沒有每小時排程 |
-| `.github/workflows/deploy.yml` | 改了 `site/index.html` 或 `scripts/` 推上 main 時重新部署；也能手動執行 |
+| `.github/workflows/arena.yml` | 只由網頁（或手動 Run workflow）觸發，每次只做一步：打一回合或結算 → 轉檔 → commit → 還要繼續就自己再觸發一次 → 部署到 GitHub Pages。已沒有每小時排程 |
+| `.github/workflows/deploy.yml` | 改了 `site/index.html` 或 `scripts/` 推上 main 時重新部署到 GitHub Pages；也能手動執行（Actions → 部署網頁） |
 | `control.json` | **只由網頁寫入**：`{"id","topic","cmd":"run/pause/end","max"}`，指定目前這場和指令 |
 | `prompt.md` | 正方、反方、主持人的規則。改玩法主要改這裡 |
 | `scripts/step.py` | 讀 control.json 決定這一步：`plan` 印出 round/verdict/close/none，`run` 執行（會呼叫 claude）。回合標題由程式寫，Claude 只寫內容 |
@@ -35,26 +35,22 @@ Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub A
 | 名稱 | 狀態 | 說明 |
 |---|---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | 已設定、2026-11-26 實測可用 | `claude setup-token` 產生，效期約一年（約 2027-11 到期）。到期或外流就重產並覆蓋；撤銷在 claude.ai 設定 |
-| `CLOUDFLARE_API_TOKEN` | **未設定** | 沒設就自動跳過部署，不會讓排程失敗 |
-| `CLOUDFLARE_ACCOUNT_ID` | **未設定** | 同上 |
 
 金鑰一律不要印在 log、檔案或對話裡。
 
 ## 目前狀態（2026-11-26）
 - 舊玩法第一場（火鍋一人一鍋，DeepSeek 勝）跑成功。
 - 新玩法（網頁出題、正反方、開始／暫停／結束）已完成，用假的 claude 模擬整場流程、用手機尺寸和模擬的 GitHub API 測過網頁。還沒在真的 Actions 上跑過。
-- 網頁**還沒上線**：缺 Cloudflare 兩個 secret。Mario 也還沒建 GitHub 權杖。
+- 改用 GitHub Pages 部署。待 Mario 把 repo 改公開、開啟 Pages、建 GitHub 權杖後才能上線試跑。
 
-## 下一步：讓網頁上線（Cloudflare Pages，免費）
-用 wrangler 直接上傳（Direct Upload），不走 Cloudflare 的 Git 整合，因為 Git 整合免費方案每月只有 500 次建置，每小時一場會超過。
-1. Mario 用手機到 https://dash.cloudflare.com/profile/api-tokens → Create Token → 「Edit Cloudflare Workers」範本（含 Pages 權限）或自訂權限 `Account → Cloudflare Pages → Edit` → 建立後複製。
-2. 帳戶 ID：Cloudflare 後台首頁右側或 Workers & Pages 頁面的 Account ID。
-3. 兩個值存成上表的 secrets。
-4. Actions → 部署網頁 → Run workflow。第一次會自動建立名為 `ai-arena` 的 Pages 專案，網址是 `https://ai-arena.pages.dev`（名稱被占用時 Cloudflare 會加後綴，以部署 log 為準）。
-5. 網址雖然沒公開，但拿到連結的人都看得到。想只給自己看，可以在 Cloudflare Zero Trust → Access 幫這個網址加 Email 驗證（免費 50 人內）。
+## 網頁（GitHub Pages）
+- 網址：https://mario-0729.github.io/ai-arena/
+- 需要 repo 是 Public，且 Settings → Pages → Source 選「GitHub Actions」（只要設一次）。
+- 網址公開，誰都看得到；但沒有 GitHub 權杖按不了控制按鈕。
+- 曾考慮 Cloudflare Pages（免費、repo 可維持私人），Mario 選了改公開走 GitHub Pages。之後想改回私人，就得換回 Cloudflare 或付費 GitHub Pro。
 
 ## 限制與成本
-- GitHub Actions：Private repo 每月 2,000 分鐘免費。每回合是一次執行，約 1 到 2 分鐘（計費無條件進位）。打一場 10 回合加結算約 15 到 25 分鐘，一個月大約可以打 80 到 100 場這種長度的。
+- GitHub Actions：Public repo 使用標準 runner 不計分鐘數。每回合是一次執行，約 1 到 3 分鐘。
 - Claude 額度：每回合、每次結算各呼叫一次 Claude，都扣 Mario 的 Pro 用量。只在他按開始時才跑。
 - GitHub 排程常延遲幾分鐘到十幾分鐘，屬正常。
 

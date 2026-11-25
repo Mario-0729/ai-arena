@@ -1,7 +1,7 @@
 name: 部署網頁
 
-# 改了網頁或轉檔腳本就重新部署；也可以在 Actions 手動按 Run workflow
-# （排程機器人用 GITHUB_TOKEN 推的 commit 不會觸發這裡，不會無限循環）
+# 改了網頁或轉檔腳本就重新部署到 GitHub Pages；也可以在 Actions 手動按 Run workflow
+# （辯論流程用 GITHUB_TOKEN 推的 commit 不會觸發這裡，那邊自己會部署）
 on:
   push:
     branches: [main]
@@ -12,27 +12,26 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
-  group: deploy
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - name: 轉檔
         run: python3 scripts/build.py
-      - name: 部署
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        run: |
-          npx --yes wrangler@4 pages project create ai-arena --production-branch main >/dev/null 2>&1 || true
-          npx --yes wrangler@4 pages deploy site --project-name ai-arena --branch main --commit-dirty=true
-      - name: 還沒設 Cloudflare 金鑰
-        if: env.CLOUDFLARE_API_TOKEN == ''
-        run: echo "沒有 CLOUDFLARE_API_TOKEN，跳過部署。設定方式見 CLAUDE.md。"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
