@@ -16,6 +16,9 @@ jobs:
   debate:
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,9 +53,16 @@ jobs:
               echo "- [${name}｜${topic}](${f})"
             done
           } > README.md
+          python3 scripts/build.py
           git config user.name "arena-bot"
           git config user.email "arena-bot@users.noreply.github.com"
-          git add debates README.md
+          git add debates README.md site/data.json
           git commit -m "新的一場" || exit 0
           git pull --rebase
           git push
+
+      - name: 部署網頁到 Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: |
+          npx --yes wrangler@4 pages project create ai-arena --production-branch main >/dev/null 2>&1 || true
+          npx --yes wrangler@4 pages deploy site --project-name ai-arena --branch main --commit-dirty=true
