@@ -1,8 +1,8 @@
 name: AI 吵架擂台
 
 # 由網頁的「開始／暫停／繼續／結束」觸發：網頁先改 control.json，再呼叫這裡。
-# 每次只做一步（打一回合、結算，或只把狀態更新到網頁），有新進度就觸發「部署網頁」，
-# 還要繼續就自己再觸發一次，直到暫停、結束或打滿回合上限。
+# 每次只做一步（正方或反方講一段、結算，或只把狀態更新到網頁），有新進度就觸發「部署網頁」，
+# 還要繼續就自己再觸發一次，直到暫停、結束或打滿回合上限（無限模式要按結束才停）。
 # 手動也可以：Actions → AI 吵架擂台 → Run workflow（會照 control.json 接著打）。
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ jobs:
         run: echo "action=$(python3 scripts/step.py plan)" | tee -a "$GITHUB_OUTPUT"
 
       - name: 安裝 Claude Code
-        if: steps.plan.outputs.action == 'round' || steps.plan.outputs.action == 'verdict'
+        if: contains(fromJSON('["pro", "con", "verdict"]'), steps.plan.outputs.action)
         run: npm install -g @anthropic-ai/claude-code --silent
 
       - name: 開吵
@@ -45,7 +45,7 @@ jobs:
           # 先拿最新的 control.json（打這回合時網頁可能按了暫停），狀態才會對
           git pull --rebase --autostash -q
           python3 scripts/build.py
-          git add debates README.md site/data.json
+          git add debates README.md site/data.json $(ls quota.json 2>/dev/null)
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0

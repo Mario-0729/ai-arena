@@ -7,7 +7,7 @@ import json
 import pathlib
 import re
 
-from step import load_control, progress, debate_path
+from step import QUOTA, debate_path, load_control, plan, progress
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEBATES = ROOT / "debates"
@@ -75,12 +75,20 @@ def parse(path: pathlib.Path) -> dict:
 
 def live_status(c):
     """目前這場（control.json 指定的那場）的狀態。"""
-    rounds, ended = progress(debate_path(c))
-    if ended:
+    p = progress(debate_path(c))
+    if p["ended"]:
         status = "ended"
     else:
         status = {"run": "running", "pause": "paused", "end": "ending"}[c["cmd"]]
-    return {**c, "rounds": rounds, "status": status}
+    # next：下一步是誰（pro 正方、con 反方、verdict 主持人結算、none 沒有）
+    return {**c, "rounds": p["done"], "status": status, "next": plan(c)}
+
+
+def load_quota():
+    try:
+        return json.loads(QUOTA.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return None
 
 
 STATUS_TEXT = {"ended": "", "running": "（進行中）", "paused": "（暫停）",
@@ -104,7 +112,8 @@ def main():
         else:
             d["status"] = "ended" if d["verdict"] else "stopped"
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps({"live": live, "debates": items}, ensure_ascii=False), encoding="utf-8")
+    data = {"live": live, "quota": load_quota(), "debates": items}
+    OUT.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     write_readme(items)
     print(f"寫入 {OUT}，共 {len(items)} 場")
 
