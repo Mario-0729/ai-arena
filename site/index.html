@@ -80,6 +80,29 @@ label.sel select{flex:1;width:auto}
 .qsub{font-size:12px;color:var(--muted);margin-top:4px}
 .card.live.err{color:var(--con)}
 h2.sec{font-size:13px;color:var(--muted);margin:22px 4px 10px;font-weight:700}
+.role{font-weight:600;opacity:.8}
+.cite{margin-left:8px;font-size:11px;font-weight:800;color:#1a1300;background:var(--gold);border-radius:6px;padding:1px 6px}
+.say strong{font-weight:800;background:linear-gradient(transparent 58%,rgba(255,197,61,.45) 58%)}
+.msg.cited .bub{box-shadow:0 0 0 2px var(--gold)}
+.msg.flash .bub{animation:flash 1.6s}
+@keyframes flash{0%,60%{background:rgba(255,197,61,.35)}}
+.score{margin:10px 0 10px 46px;padding:9px 12px;border-radius:12px;border:1px dashed var(--gold);font-size:14px}
+.sh{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sh b{color:var(--gold);font-size:12px}
+.sp em{font-style:normal;font-weight:700}
+.sp em.lead{font-weight:900;font-size:16px}
+.sn{color:var(--muted);margin-top:4px}
+.board{margin:12px 0 4px}
+.bl{display:flex;justify-content:space-between;align-items:baseline;font-size:15px}
+.bl span{font-size:12px;color:var(--muted)}
+.bbar{display:flex;height:8px;border-radius:99px;overflow:hidden;margin-top:6px;background:var(--panel2)}
+.bbar i{display:block;height:100%}
+.verdict h3{margin:14px 0 6px;font-size:13px;color:var(--gold)}
+.quote{display:block;padding:8px 0;border-top:1px solid var(--line);font-size:15px}
+.quote b{margin-right:6px;font-size:13px}
+.clamp{display:block}
+.clamp .say{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.btn.fold{width:100%;margin:10px 0 4px;min-height:40px;font-size:14px;color:var(--muted)}
 footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
 </style>
 </head>
@@ -104,7 +127,7 @@ const POLL_MS = 10000;
 const MAX_ACTIVE = 20; // 最多同時打幾場（GitHub 免費最多同時 20 台機器）
 
 const PLAYERS = {
-  正方: "var(--pro)", 反方: "var(--con)",
+  正方: "var(--pro)", 反方: "var(--con)", 評審: "var(--gold)",
   // 舊玩法（五個 AI 角色）的場次
   GPT: "#10A37F", Gemini: "#4285F4", Grok: "#8B8F98", DeepSeek: "#4D6BFE", Claude: "#D97757",
 };
@@ -126,7 +149,7 @@ const $ = (tag, attrs = {}, ...kids) => {
     else if (k === "value") el.value = v;
     else if (v != null && v !== false) el.setAttribute(k, v === true ? "" : v);
   }
-  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
   return el;
 };
 
@@ -228,28 +251,33 @@ let NOTE = null;    // { text, kind }
 let BUSY = false;
 let SHOW_TOKEN_FORM = false;
 let DRAFT = "";
-let MAX = "10";
+let MAX = "3";
+let SHOW_N = 10;      // 所有場次先顯示幾場
+let EXPANDED = {};    // 單場內容：id → true 代表展開全部
+const FOLD_KEEP = 12; // 單場內容預設只顯示最後幾段
 
-// 下一個發言的是誰
-function nextSpeaker(d, max) {
-  const rounds = d ? d.rounds : [];
-  const last = rounds[rounds.length - 1];
-  const done = rounds.filter((r) => r.msgs.some((m) => m.who === "反方")).length;
-  if (last && last.msgs.some((m) => m.who === "正方") && !last.msgs.some((m) => m.who === "反方")) {
-    return { who: "反方", round: rounds.length };
-  }
-  if (max && done >= max) return { who: "主持人", round: done };
-  return { who: "正方", round: rounds.length + 1 };
+// 下一步（data.json 的 live.next；剛按開始還沒資料時當作正方立論）
+function nextOf(cur) {
+  return cur.next || { kind: "speech", stage: "立論", who: "正方", role: "立論" };
+}
+function nextLabel(n) {
+  if (n.kind === "speech") return `${n.stage}・${n.who}${n.role && n.role !== n.stage ? "（" + n.role + "）" : ""}`;
+  if (n.kind === "score") return `評審為「${n.stage}」打分`;
+  return "評審判決";
+}
+function progressText(cur) {
+  if (!cur.stage) return cur.max ? `自由辯論 ${cur.max} 來回` : "自由辯論無上限";
+  if (cur.stage === "自由辯論") return cur.max ? `自由辯論 第 ${cur.free}／${cur.max} 來回` : `自由辯論 第 ${cur.free} 來回・無上限`;
+  return `${cur.stage}階段`;
 }
 
 // 一場的即時狀態：剛按的按鈕優先，其次 data.json
 function view(base) {
   const d = DATA.find((x) => x.id === base.id);
-  const done = d ? d.rounds.filter((r) => r.msgs.some((m) => m.who === "反方")).length : 0;
   let status;
   if (d && d.verdict) status = "ended";
   else status = { run: "running", pause: "paused", end: "ending" }[base.cmd] || "paused";
-  return { ...base, max: Number(base.max) || 0, done, status, debate: d };
+  return { ...base, max: Number(base.max) || 0, status, debate: d };
 }
 
 // 還沒結束的場次（新的在上面）
@@ -356,18 +384,44 @@ function winnerSpan(d) {
     d.winner === "平手" ? "平手" : "勝者 " + d.winner);
 }
 
-function bubble(m) {
-  return $("div", { class: "msg", style: "--c:" + color(m.who) },
+function bubble(m, cite) {
+  return $("div", { class: "msg" + (cite != null ? " cited" : ""), style: "--c:" + color(m.who), "data-cite": cite },
     $("div", { class: "av" }, m.who.slice(0, 1)),
-    $("div", { class: "bub" }, $("div", { class: "who" }, m.who), $("div", { class: "say" }, rich(m.text))));
+    $("div", { class: "bub" },
+      $("div", { class: "who" }, m.who, m.role ? $("span", { class: "role" }, "・" + m.role) : null,
+        cite != null ? $("span", { class: "cite" }, "評審引用") : null),
+      $("div", { class: "say" }, rich(m.text))));
 }
 
-function thinkingBubble(who) {
-  const c = who === "主持人" ? "var(--gold)" : color(who);
-  return $("div", { class: "msg thinking", style: "--c:" + c },
+function thinkingBubble(n) {
+  const speech = n.kind === "speech";
+  const who = speech ? n.who : "評審";
+  return $("div", { class: "msg thinking", style: "--c:" + color(who) },
     $("div", { class: "av" }, who.slice(0, 1)),
-    $("div", { class: "bub" }, $("div", { class: "who" }, who),
-      $("div", { class: "say" }, who === "主持人" ? "結算中" : "思考中", $("span", { class: "dots" }, $("i"), $("i"), $("i")))));
+    $("div", { class: "bub" }, $("div", { class: "who" }, who, speech && n.role ? $("span", { class: "role" }, "・" + n.role) : null),
+      $("div", { class: "say" }, speech ? "思考中" : n.kind === "score" ? "打分中" : "判決中",
+        $("span", { class: "dots" }, $("i"), $("i"), $("i")))));
+}
+
+function scoreCard(x) {
+  if (x.pro == null) return $("div", { class: "score" }, $("div", { class: "sh" }, $("b", {}, "評審打分")), $("div", { class: "sn" }, x.text));
+  const lead = x.pro > x.con ? "pro" : x.con > x.pro ? "con" : "";
+  return $("div", { class: "score" },
+    $("div", { class: "sh" }, $("b", {}, "評審打分"),
+      $("span", { class: "sp" }, $("em", { class: lead === "pro" ? "lead" : "", style: "color:var(--pro)" }, "正方 " + x.pro),
+        "：", $("em", { class: lead === "con" ? "lead" : "", style: "color:var(--con)" }, x.con + " 反方"))),
+    x.text ? $("div", { class: "sn" }, x.text) : null);
+}
+
+// 累計比分
+function scoreboard(t) {
+  if (!t) return null;
+  const sum = t.pro + t.con || 1;
+  return $("div", { class: "board" },
+    $("div", { class: "bl" }, $("b", { style: "color:var(--pro)" }, "正方 " + t.pro),
+      $("span", {}, `評審打分 ${t.n} 次累計`), $("b", { style: "color:var(--con)" }, t.con + " 反方")),
+    $("div", { class: "bbar" }, $("i", { style: `width:${(t.pro / sum) * 100}%;background:var(--pro)` }),
+      $("i", { style: `width:${(t.con / sum) * 100}%;background:var(--con)` })));
 }
 
 function ago(iso) {
@@ -378,10 +432,10 @@ function ago(iso) {
 // 一句話說明現在在幹嘛
 function statusLine(cur) {
   const RUN = RUNS[cur.id] || null;
-  if (cur.status === "paused") return { text: "已暫停。按「繼續」接著打，按「結束」請主持人結算。" };
-  const next = nextSpeaker(cur.debate, cur.max);
-  const who = cur.status === "ending" ? "主持人" : next.who;
-  const doing = who === "主持人" ? "主持人正在結算" : `第 ${next.round} 回合，${who}正在想`;
+  if (cur.status === "paused") return { text: "已暫停。按「繼續」接著打；按「結束」會先打分、雙方結辯，再由評審判決。" };
+  const n = nextOf(cur);
+  const who = nextLabel(n);
+  const doing = n.kind === "speech" ? `${who} 正在想` : n.kind === "score" ? `評審正在為「${n.stage}」打分` : "評審正在判決";
   if (!RUN) return { text: doing + "…" };
   if (RUN.status === "completed" && RUN.conclusion === "failure") {
     return { text: "上一步失敗了，辯論停住。按「暫停」再按「繼續」可以重試。", link: RUN.html_url, err: true };
@@ -442,21 +496,18 @@ function statusNote(cur, cls = "note status") {
     line.link ? [" ", $("a", { href: line.link, target: "_blank", rel: "noopener", class: "link" }, "看原因")] : null);
 }
 
-// 一場進行中的卡片：題目、狀態、最新一段、思考中、按鈕
-function activeCard(cur, compact) {
-  const rounds = cur.max ? `第 ${cur.done}／${cur.max} 回合打完` : `已打完 ${cur.done} 回合・無上限`;
+// 一場進行中的卡片（精簡）：題目、進度、比分、狀態、最新一句、按鈕
+function activeCard(cur) {
   const msgs = cur.debate ? cur.debate.rounds.flatMap((r) => r.msgs) : [];
-  const feed = $("div", { class: "feed" }, msgs.slice(compact ? -1 : -2).map(bubble));
-  if (cur.status === "running" || cur.status === "ending") {
-    feed.append(thinkingBubble(cur.status === "ending" ? "主持人" : nextSpeaker(cur.debate, cur.max).who));
-  }
+  const last = msgs[msgs.length - 1];
   return $("div", { class: "card" },
     $("div", { class: "now" },
       $("a", { class: "t", href: "#/d/" + cur.id }, cur.topic),
-      $("div", { class: "m" }, statusPill(cur.status), rounds)),
+      $("div", { class: "m" }, statusPill(cur.status), progressText(cur))),
+    scoreboard(cur.debate && cur.debate.totals),
     statusNote(cur),
-    feed.childNodes.length ? feed : null,
-    msgs.length > (compact ? 1 : 2) ? $("a", { class: "more", href: "#/d/" + cur.id }, "看整場（" + msgs.length + " 段）→") : null,
+    last ? $("a", { class: "clamp", href: "#/d/" + cur.id }, bubble(last)) : null,
+    msgs.length ? $("a", { class: "more", href: "#/d/" + cur.id }, "看整場（" + msgs.length + " 段）→") : null,
     controlButtons(cur));
 }
 
@@ -467,11 +518,12 @@ function newTopicCard() {
     kids.push(
       $("textarea", { id: "topic", placeholder: "一行一題，可以一次貼很多題，會同時開打\n例如：早餐店的大冰奶該不該漲價", value: DRAFT,
         oninput: (e) => { DRAFT = e.target.value; } }),
-      $("label", { class: "sel" }, "回合上限",
+      $("label", { class: "sel" }, "自由辯論",
         $("select", { onchange: (e) => { MAX = e.target.value; render(); } },
-          [["3", "3 回合"], ["5", "5 回合"], ["10", "10 回合"], ["20", "20 回合"], ["0", "無限（按結束才停）"]]
+          [["3", "3 來回"], ["5", "5 來回"], ["10", "10 來回"], ["20", "20 來回"], ["0", "無限（按結束才停）"]]
             .map(([v, t]) => $("option", { value: v, selected: v === MAX }, t)))),
-      MAX === "0" ? $("div", { class: "note" }, "無限模式會一直吵、一直用你的 Claude 額度，直到你按「結束」。") : null,
+      $("div", { class: "note" }, "流程：立論 → 質詢 → 駁論 → 自由辯論 → 結辯 → 評審判決，每個階段評審都會打分。",
+        MAX === "0" ? "無限模式會一直用你的 Claude 額度，直到你按「結束」。" : `一場約 ${15 + 2 * Number(MAX) + Math.ceil(Number(MAX) / 5)} 步（發言、打分、判決各算一步），每步 20 到 40 秒。`),
       $("div", { class: "row" }, $("button", { class: "btn go", disabled: BUSY, onclick: () => act("start") }, "開始")));
   } else {
     kids.push($("div", { class: "note" }, "要出題和控制，先貼上 GitHub 權杖。權杖只存在這支手機的瀏覽器，別人拿到網址也只能看。"));
@@ -488,20 +540,42 @@ function newTopicCard() {
 }
 
 function listView() {
-  const items = DATA.map((d) =>
+  const items = DATA.slice(0, SHOW_N).map((d) =>
     $("a", { class: "item", href: "#/d/" + d.id },
       $("div", { class: "t" }, d.title),
-      $("div", { class: "m" }, d.time, d.status === "ended" ? winnerSpan(d) : statusPill(d.status))));
+      $("div", { class: "m" }, d.time, d.status === "ended" ? winnerSpan(d) : statusPill(d.status),
+        d.totals ? $("span", {}, `${d.totals.pro}：${d.totals.con}`) : null)));
+  const rest = DATA.length - SHOW_N;
   const list = actives();
   const running = list.filter((v) => v.status !== "paused").length;
   return [
     newTopicCard(),
     list.length ? $("h2", { class: "sec" }, `進行中 ${list.length} 場`, running > 1 ? `（同時 ${running} 台機器在跑）` : "") : null,
-    list.map((v) => activeCard(v, list.length > 2)),
+    list.map((v) => activeCard(v)),
     quotaCard(),
     $("div", { class: "card" }, $("h2", { class: "h" }, "所有場次"),
-      items.length ? items : $("div", { class: "empty" }, "還沒有任何一場，出個題目開打吧")),
+      items.length ? items : $("div", { class: "empty" }, "還沒有任何一場，出個題目開打吧"),
+      rest > 0 ? $("button", { class: "btn fold", onclick: () => { SHOW_N += 10; render(); } }, `再顯示 10 場（還有 ${rest} 場）`) : null),
   ];
+}
+
+// 評審引用的句子對到哪一段發言
+function citeIndex(d, m) {
+  const norm = (t) => String(t).replace(/\*\*/g, "").replace(/\s+/g, "");
+  const plain = norm(m.text);
+  const k = (d.quotes || []).findIndex((q) => q.who === m.who && q.text && plain.includes(norm(q.text)));
+  return k >= 0 ? k : null;
+}
+
+function jumpTo(id, k) {
+  EXPANDED[id] = true;
+  render();
+  const el = document.querySelector(`[data-cite="${k}"]`);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 1600);
+  }
 }
 
 function detailView(id) {
@@ -511,28 +585,37 @@ function detailView(id) {
   if (i < 0) {
     return [$("a", { class: "back", href: "#/" }, "← 回列表"),
       $("div", { class: "card" }, isCur ? $("div", { class: "topic" }, cur.topic) : null,
-        isCur ? thinkingBubble("正方") : $("div", { class: "empty" }, "找不到這場"))];
+        isCur ? [$("div", { class: "round" }, "立論"), thinkingBubble(nextOf(cur))] : $("div", { class: "empty" }, "找不到這場"))];
   }
   const d = DATA[i];
   const status = isCur ? cur.status : d.status;
   const who = [...new Set(d.rounds.flatMap((r) => r.msgs.map((m) => m.who)))];
   const head = $("div", { class: "card" },
-    $("div", { class: "meta" }, d.time, isCur && !cur.max ? "・無上限" : null),
+    $("div", { class: "meta" }, d.time, isCur ? "・" + progressText(cur) : null),
     $("div", { class: "topic" }, d.title),
     $("div", { class: "roster" }, who.map((n) => $("span", { class: "tag", style: "--c:" + color(n) }, n)),
-      status !== "ended" ? statusPill(status) : null));
+      status !== "ended" ? statusPill(status) : null),
+    scoreboard(d.totals));
+  let lastStage = null;
   if (d.raw) {
     head.append($("div", { class: "raw" }, rich(d.raw)));
   } else {
-    d.rounds.forEach((r) => {
-      head.append($("div", { class: "round" }, r.name));
-      r.msgs.forEach((m) => head.append(bubble(m)));
+    const entries = d.rounds.flatMap((r) =>
+      (r.items || r.msgs.map((m) => ({ type: "msg", ...m }))).map((x) => ({ stage: r.name, x })));
+    let start = 0;
+    if (!EXPANDED[id] && entries.length > FOLD_KEEP) {
+      start = entries.length - FOLD_KEEP;
+      head.append($("button", { class: "btn fold", onclick: () => { EXPANDED[id] = true; render(); } }, `展開前面 ${start} 段`));
+    }
+    entries.slice(start).forEach(({ stage, x }) => {
+      if (stage !== lastStage) { head.append($("div", { class: "round" }, stage)); lastStage = stage; }
+      head.append(x.type === "score" ? scoreCard(x) : bubble(x, citeIndex(d, x)));
     });
   }
   if (isCur && (status === "running" || status === "ending")) {
-    const next = status === "ending" ? { who: "主持人" } : nextSpeaker(d, cur.max);
-    if (next.who === "正方" && next.round > d.rounds.length) head.append($("div", { class: "round" }, "第 " + next.round + " 回合"));
-    head.append(thinkingBubble(next.who));
+    const n = nextOf(cur);
+    if (n.stage && n.stage !== lastStage) head.append($("div", { class: "round" }, n.kind === "verdict" ? "評審判決" : n.stage));
+    head.append(thinkingBubble(n));
   }
   const out = [$("a", { class: "back", href: "#/" }, "← 回列表"), head];
   if (isCur && status !== "ended") {
@@ -540,7 +623,13 @@ function detailView(id) {
   } else if (status === "stopped") {
     out.push($("div", { class: "card live" }, "這場沒打完就換題了"));
   }
-  if (d.verdict) out.push($("div", { class: "card verdict" }, $("h2", {}, "主持人結算"), $("div", { class: "say" }, rich(d.verdict))));
+  if (d.verdict) {
+    const quotes = d.quotes || [];
+    out.push($("div", { class: "card verdict" }, $("h2", {}, "評審判決"), $("div", { class: "say" }, rich(d.verdict)),
+      quotes.length ? [$("h3", {}, "關鍵發言"), quotes.map((q, k) =>
+        $("a", { class: "quote", href: "#/d/" + id, onclick: (e) => { e.preventDefault(); jumpTo(id, k); } },
+          $("b", { style: "color:" + color(q.who) }, q.who + (q.stage ? "・" + q.stage : "")), "「" + q.text + "」"))] : null));
+  }
   const newer = DATA[i - 1], older = DATA[i + 1];
   out.push($("div", { class: "nav" },
     $("a", { href: newer ? "#/d/" + newer.id : "#/", class: newer ? "" : "off" }, "← 較新一場"),
