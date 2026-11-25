@@ -1,5 +1,5 @@
 {
-  "at": "2026-11-26 04:34:35",
+  "at": "2026-11-26 04:35:05",
   "info": {
     "status": "allowed",
     "resetsAt": 1795648800,
@@ -9,7 +9,7 @@
     "isUsingOverage": false,
     "unifiedWindows": {
       "five_hour": {
-        "utilization": 0.79,
+        "utilization": 0.8,
         "resetsAt": 1795648800,
         "status": "allowed"
       },
