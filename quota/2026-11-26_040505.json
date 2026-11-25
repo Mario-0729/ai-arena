@@ -1,5 +1,5 @@
 {
-  "at": "2026-11-26 04:12:06",
+  "at": "2026-11-26 04:12:31",
   "info": {
     "status": "allowed",
     "resetsAt": 1795648800,
@@ -14,7 +14,7 @@
         "status": "allowed"
       },
       "seven_day": {
-        "utilization": 0.61,
+        "utilization": 0.62,
         "resetsAt": 1795654800,
         "status": "allowed"
       }
