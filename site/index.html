@@ -103,6 +103,9 @@ h2.sec{font-size:13px;color:var(--muted);margin:22px 4px 10px;font-weight:700}
 .clamp{display:block}
 .clamp .say{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .btn.fold{width:100%;margin:10px 0 4px;min-height:40px;font-size:14px;color:var(--muted)}
+.bulk{margin:-4px 0 14px}
+.bulk .row{margin-top:0}
+.bulk .btn{font-size:14px;padding:0 6px}
 footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
 </style>
 </head>
@@ -299,7 +302,7 @@ async function act(kind, id) {
   if (kind === "start") return startMany();
   const cur = findActive(id);
   if (!cur) return;
-  if (kind === "end" && !confirm("確定要結束「" + cur.topic + "」？主持人會直接結算。")) return;
+  if (kind === "end" && !confirm("確定要結束「" + cur.topic + "」？會先打分、雙方結辯，再由評審判決。")) return;
   const ctrl = { id: cur.id, topic: cur.topic, max: cur.max, cmd: { pause: "pause", resume: "run", end: "end" }[kind] };
   const label = { pause: "暫停", resume: "繼續", end: "結束" }[kind];
   BUSY = true; NOTE = { text: "送出中…", kind: "" }; render();
@@ -311,7 +314,7 @@ async function act(kind, id) {
     NOTE = { text: {
       pause: "已暫停。正在講的那一段會講完，之後停下。",
       resume: "已送出，接著打。",
-      end: "已送出，主持人準備結算。",
+      end: "已送出，準備結辯和判決。",
     }[kind], kind: "ok" };
   } catch (e) {
     NOTE = { text: e.message, kind: "err" };
@@ -319,6 +322,57 @@ async function act(kind, id) {
   BUSY = false;
   render();
   schedulePoll(1500);
+}
+
+// 一鍵全部暫停／繼續／結束
+let BULK_NOTE = null;
+async function actAll(kind) {
+  const list = actives();
+  const targets = list.filter((v) =>
+    kind === "pause" ? v.status === "running" :
+    kind === "resume" ? v.status === "paused" :
+    v.status !== "ending");
+  if (!targets.length) return;
+  const label = { pause: "暫停", resume: "繼續", end: "結束" }[kind];
+  if (kind === "end" && !confirm(`結束全部 ${targets.length} 場？每場會先打分、雙方結辯，再由評審判決。`)) return;
+  BUSY = true;
+  let ok = 0;
+  const failed = [];
+  for (const v of targets) {
+    BULK_NOTE = { text: `${label}中 ${ok + failed.length + 1}／${targets.length}…`, kind: "" };
+    render();
+    const ctrl = { id: v.id, topic: v.topic, max: v.max, cmd: { pause: "pause", resume: "run", end: "end" }[kind] };
+    try {
+      await writeControl(ctrl, "全部" + label);
+      await dispatch(ctrl.id);
+      PENDING[ctrl.id] = { ctrl, at: Date.now() };
+      delete RUNS[ctrl.id];
+      ok++;
+    } catch (e) {
+      failed.push(v.topic + "（" + e.message + "）");
+    }
+  }
+  BULK_NOTE = failed.length
+    ? { text: `已${label} ${ok} 場，${failed.length} 場失敗：${failed.join("、")}`, kind: "err" }
+    : { text: kind === "pause" ? `已暫停 ${ok} 場。正在講的那一段會講完，之後停下。`
+        : kind === "resume" ? `已繼續 ${ok} 場。` : `已結束 ${ok} 場，各場會先結辯再判決。`, kind: "ok" };
+  BUSY = false;
+  render();
+  schedulePoll(1500);
+}
+
+function bulkBar(list) {
+  if (!getToken() || list.length < 2) return null;
+  const running = list.filter((v) => v.status === "running").length;
+  const paused = list.filter((v) => v.status === "paused").length;
+  const endable = list.filter((v) => v.status !== "ending").length;
+  const btns = [];
+  if (running) btns.push($("button", { class: "btn", disabled: BUSY, onclick: () => actAll("pause") }, `全部暫停（${running}）`));
+  if (paused) btns.push($("button", { class: "btn go", disabled: BUSY, onclick: () => actAll("resume") }, `全部繼續（${paused}）`));
+  if (endable) btns.push($("button", { class: "btn stop", disabled: BUSY, onclick: () => actAll("end") }, `全部結束（${endable}）`));
+  if (!btns.length && !BULK_NOTE) return null;
+  return $("div", { class: "bulk" }, btns.length ? $("div", { class: "row" }, btns) : null,
+    BULK_NOTE ? $("div", { class: "note " + BULK_NOTE.kind }, BULK_NOTE.text) : null);
 }
 
 // 一行一題，一次開很多場，同時打
@@ -551,6 +605,7 @@ function listView() {
   return [
     newTopicCard(),
     list.length ? $("h2", { class: "sec" }, `進行中 ${list.length} 場`, running > 1 ? `（同時 ${running} 台機器在跑）` : "") : null,
+    bulkBar(list),
     list.map((v) => activeCard(v)),
     quotaCard(),
     $("div", { class: "card" }, $("h2", { class: "h" }, "所有場次"),
