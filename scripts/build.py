@@ -115,7 +115,7 @@ def live_status(c):
     if p["ended"]:
         status = "ended"
     else:
-        status = {"run": "running", "pause": "paused", "end": "ending"}[c["cmd"]]
+        status = {"run": "running", "pause": "paused", "end": "ending", "stop": "stopped"}[c["cmd"]]
     # next：下一步（{"kind": "speech", "stage", "who", "role"}、score、verdict…），暫停時照「繼續」會做的算
     nxt = plan_step({**c, "cmd": "run" if c["cmd"] == "pause" else c["cmd"]})
     return {**c, "stage": p["stage"], "free": p["free"], "speeches": p["speeches"],
@@ -153,7 +153,7 @@ def main():
         if c:
             states[c["id"]] = live_status(c)
     # live：還沒結束的場次（剛按開始、還沒有戰況檔的也在裡面）
-    live = sorted((s for s in states.values() if s["status"] != "ended"),
+    live = sorted((s for s in states.values() if s["status"] not in ("ended", "stopped")),
                   key=lambda s: sort_key(s["id"]), reverse=True)
     paths = sorted(DEBATES.glob("*.md"), key=lambda p: sort_key(p.stem), reverse=True)
     items = [parse(p) for p in paths]

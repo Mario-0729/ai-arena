@@ -11,7 +11,8 @@
   按「結束」：目前階段還沒打分就先打分，接著雙方結辯，最後判決。
 
 每一場有自己的控制檔 controls/<id>.json，只由網頁寫入：
-  {"id": "2026-11-26_153000-1", "topic": "辯題", "cmd": "run|pause|end", "max": 3}
+  {"id": "2026-11-26_153000-1", "topic": "辯題", "cmd": "run|pause|end|stop", "max": 3}
+  stop 是放棄：不再打、不判決，網頁顯示「中斷」。
 
 用法：
   python3 scripts/step.py plan <id>   印出下一步的種類：speech / score / verdict / close / none
@@ -64,7 +65,8 @@ def load_control(cid):
     topic = " ".join(str(c.get("topic", "")).split())[:200]
     if not topic:
         return None
-    cmd = c.get("cmd") if c.get("cmd") in ("run", "pause", "end") else "pause"
+    # stop：放棄這場，不再打也不判決（卡住時用，不花額度）
+    cmd = c.get("cmd") if c.get("cmd") in ("run", "pause", "end", "stop") else "pause"
     try:
         mx = int(c.get("max", 3))
     except (TypeError, ValueError):
@@ -162,7 +164,7 @@ def plan_step(c):
     log, ended, legacy = read_log(debate_path(c))
     if ended or legacy:
         return None
-    if c["cmd"] == "pause":
+    if c["cmd"] in ("pause", "stop"):
         return None
     return next_step(c, log)
 

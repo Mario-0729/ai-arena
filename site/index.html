@@ -106,6 +106,17 @@ h2.sec{font-size:13px;color:var(--muted);margin:22px 4px 10px;font-weight:700}
 .bulk{margin:-4px 0 14px}
 .bulk .row{margin-top:0}
 .bulk .btn{font-size:14px;padding:0 6px}
+.qmini{position:fixed;top:calc(10px + env(safe-area-inset-top));right:max(12px,calc((100vw - 720px) / 2 + 12px));z-index:20}
+.qbtn{display:block;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px 8px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.qm{display:flex;align-items:center;gap:5px;font-size:11px;line-height:1.5}
+.qk{color:var(--muted);width:20px;text-align:left}
+.qb{width:44px;height:5px;border-radius:9px;background:var(--panel2);overflow:hidden;display:inline-block}
+.qb i{display:block;height:100%}
+.qv{font-weight:800;width:30px;text-align:right}
+.qd{margin-top:6px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;width:220px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.qd b{display:block;margin-bottom:4px;color:var(--muted);font-size:12px}
+header{padding-right:120px}
+.clamp .say{-webkit-line-clamp:2}
 footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
 </style>
 </head>
@@ -116,8 +127,8 @@ footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
       <div class="logo">AI <span>吵架</span>擂台</div>
       <div class="sub">你出題，Claude 自己跟自己吵</div>
     </a>
-    <div id="count" class="pill">載入中</div>
   </header>
+  <div id="quota" class="qmini"></div>
   <main id="app"><div class="empty">擂台布置中…</div></main>
   <footer>所有發言由 Claude 生成，純屬娛樂</footer>
 </div>
@@ -256,8 +267,6 @@ let SHOW_TOKEN_FORM = false;
 let DRAFT = "";
 let MAX = "3";
 let SHOW_N = 10;      // 所有場次先顯示幾場
-let EXPANDED = {};    // 單場內容：id → true 代表展開全部
-const FOLD_KEEP = 12; // 單場內容預設只顯示最後幾段
 
 // 下一步（data.json 的 live.next；剛按開始還沒資料時當作正方立論）
 function nextOf(cur) {
@@ -279,7 +288,7 @@ function view(base) {
   const d = DATA.find((x) => x.id === base.id);
   let status;
   if (d && d.verdict) status = "ended";
-  else status = { run: "running", pause: "paused", end: "ending" }[base.cmd] || "paused";
+  else status = { run: "running", pause: "paused", end: "ending", stop: "stopped" }[base.cmd] || "paused";
   return { ...base, max: Number(base.max) || 0, status, debate: d };
 }
 
@@ -293,29 +302,50 @@ function actives() {
     if (synced || Date.now() - p.at > 180000) delete PENDING[id];
     else byId[id] = { ...(l || {}), ...p.ctrl };
   }
-  return Object.values(byId).map(view).filter((v) => v.status !== "ended")
+  return Object.values(byId).map(view).filter((v) => v.status !== "ended" && v.status !== "stopped")
     .sort((a, b) => (a.id < b.id ? 1 : -1));
 }
 const findActive = (id) => actives().find((v) => v.id === id) || null;
+
+// 卡住：最近一次執行失敗（例如額度用完），或結算中卻沒有任何執行在跑
+function isStuck(v) {
+  const r = RUNS[v.id];
+  if (v.status !== "running" && v.status !== "ending") return false;
+  if (r) return r.status === "completed" && r.conclusion === "failure";
+  return v.status === "ending" && !PENDING[v.id] && !!getToken();
+}
+
+const CMD = { pause: "pause", resume: "run", end: "end", stop: "stop" };
+const LABEL = { pause: "暫停", resume: "繼續", end: "結束", stop: "放棄", retry: "重試" };
+const DONE = {
+  pause: "已暫停。正在講的那一段會講完，之後停下。",
+  resume: "已送出，接著打。",
+  end: "已送出，準備結辯和判決。",
+  stop: "已放棄這場，不會判決，也不會再用額度。",
+  retry: "已重新啟動，從卡住的地方接著做。",
+};
+
+// 送出一場的指令；retry 不改控制檔，只重新觸發
+async function sendOne(v, kind, prefix = "") {
+  if (kind !== "retry") {
+    const ctrl = { id: v.id, topic: v.topic, max: v.max, cmd: CMD[kind] };
+    await writeControl(ctrl, prefix + LABEL[kind]);
+    PENDING[v.id] = { ctrl, at: Date.now() };
+  }
+  await dispatch(v.id);
+  delete RUNS[v.id];
+}
 
 async function act(kind, id) {
   if (kind === "start") return startMany();
   const cur = findActive(id);
   if (!cur) return;
   if (kind === "end" && !confirm("確定要結束「" + cur.topic + "」？會先打分、雙方結辯，再由評審判決。")) return;
-  const ctrl = { id: cur.id, topic: cur.topic, max: cur.max, cmd: { pause: "pause", resume: "run", end: "end" }[kind] };
-  const label = { pause: "暫停", resume: "繼續", end: "結束" }[kind];
+  if (kind === "stop" && !confirm("放棄「" + cur.topic + "」？不會判決，也不會再用額度。")) return;
   BUSY = true; NOTE = { text: "送出中…", kind: "" }; render();
   try {
-    await writeControl(ctrl, label);
-    await dispatch(ctrl.id);
-    PENDING[ctrl.id] = { ctrl, at: Date.now() };
-    delete RUNS[ctrl.id];
-    NOTE = { text: {
-      pause: "已暫停。正在講的那一段會講完，之後停下。",
-      resume: "已送出，接著打。",
-      end: "已送出，準備結辯和判決。",
-    }[kind], kind: "ok" };
+    await sendOne(cur, kind);
+    NOTE = { text: DONE[kind], kind: "ok" };
   } catch (e) {
     NOTE = { text: e.message, kind: "err" };
   }
@@ -329,24 +359,23 @@ let BULK_NOTE = null;
 async function actAll(kind) {
   const list = actives();
   const targets = list.filter((v) =>
-    kind === "pause" ? v.status === "running" :
+    kind === "pause" ? v.status === "running" && !isStuck(v) :
     kind === "resume" ? v.status === "paused" :
-    v.status !== "ending");
+    kind === "end" ? v.status === "running" || v.status === "paused" :
+    isStuck(v)); // retry、stop 只對卡住的
   if (!targets.length) return;
-  const label = { pause: "暫停", resume: "繼續", end: "結束" }[kind];
+  const label = LABEL[kind];
   if (kind === "end" && !confirm(`結束全部 ${targets.length} 場？每場會先打分、雙方結辯，再由評審判決。`)) return;
+  if (kind === "stop" && !confirm(`放棄卡住的 ${targets.length} 場？不會判決，也不會再用額度。`)) return;
+  if (kind === "retry" && !confirm(`重試卡住的 ${targets.length} 場？每場會接著用額度把剩下的步驟做完。`)) return;
   BUSY = true;
   let ok = 0;
   const failed = [];
   for (const v of targets) {
     BULK_NOTE = { text: `${label}中 ${ok + failed.length + 1}／${targets.length}…`, kind: "" };
     render();
-    const ctrl = { id: v.id, topic: v.topic, max: v.max, cmd: { pause: "pause", resume: "run", end: "end" }[kind] };
     try {
-      await writeControl(ctrl, "全部" + label);
-      await dispatch(ctrl.id);
-      PENDING[ctrl.id] = { ctrl, at: Date.now() };
-      delete RUNS[ctrl.id];
+      await sendOne(v, kind, "全部");
       ok++;
     } catch (e) {
       failed.push(v.topic + "（" + e.message + "）");
@@ -354,25 +383,33 @@ async function actAll(kind) {
   }
   BULK_NOTE = failed.length
     ? { text: `已${label} ${ok} 場，${failed.length} 場失敗：${failed.join("、")}`, kind: "err" }
-    : { text: kind === "pause" ? `已暫停 ${ok} 場。正在講的那一段會講完，之後停下。`
-        : kind === "resume" ? `已繼續 ${ok} 場。` : `已結束 ${ok} 場，各場會先結辯再判決。`, kind: "ok" };
+    : { text: `已${label} ${ok} 場。`, kind: "ok" };
   BUSY = false;
   render();
   schedulePoll(1500);
 }
 
 function bulkBar(list) {
-  if (!getToken() || list.length < 2) return null;
-  const running = list.filter((v) => v.status === "running").length;
+  if (!getToken()) return null;
+  const stuck = list.filter(isStuck).length;
+  const running = list.filter((v) => v.status === "running" && !isStuck(v)).length;
   const paused = list.filter((v) => v.status === "paused").length;
-  const endable = list.filter((v) => v.status !== "ending").length;
-  const btns = [];
-  if (running) btns.push($("button", { class: "btn", disabled: BUSY, onclick: () => actAll("pause") }, `全部暫停（${running}）`));
-  if (paused) btns.push($("button", { class: "btn go", disabled: BUSY, onclick: () => actAll("resume") }, `全部繼續（${paused}）`));
-  if (endable) btns.push($("button", { class: "btn stop", disabled: BUSY, onclick: () => actAll("end") }, `全部結束（${endable}）`));
-  if (!btns.length && !BULK_NOTE) return null;
-  return $("div", { class: "bulk" }, btns.length ? $("div", { class: "row" }, btns) : null,
-    BULK_NOTE ? $("div", { class: "note " + BULK_NOTE.kind }, BULK_NOTE.text) : null);
+  const endable = list.filter((v) => v.status === "running" || v.status === "paused").length;
+  const rows = [];
+  if (list.length >= 2) {
+    const btns = [];
+    if (running) btns.push($("button", { class: "btn", disabled: BUSY, onclick: () => actAll("pause") }, `全部暫停（${running}）`));
+    if (paused) btns.push($("button", { class: "btn go", disabled: BUSY, onclick: () => actAll("resume") }, `全部繼續（${paused}）`));
+    if (endable) btns.push($("button", { class: "btn stop", disabled: BUSY, onclick: () => actAll("end") }, `全部結束（${endable}）`));
+    if (btns.length) rows.push($("div", { class: "row" }, btns));
+  }
+  if (stuck >= 2) {
+    rows.push($("div", { class: "row" },
+      $("button", { class: "btn", disabled: BUSY, onclick: () => actAll("retry") }, `重試卡住的（${stuck}）`),
+      $("button", { class: "btn stop", disabled: BUSY, onclick: () => actAll("stop") }, `放棄卡住的（${stuck}）`)));
+  }
+  if (!rows.length && !BULK_NOTE) return null;
+  return $("div", { class: "bulk" }, rows, BULK_NOTE ? $("div", { class: "note " + BULK_NOTE.kind }, BULK_NOTE.text) : null);
 }
 
 // 一行一題，一次開很多場，同時打
@@ -490,9 +527,9 @@ function statusLine(cur) {
   const n = nextOf(cur);
   const who = nextLabel(n);
   const doing = n.kind === "speech" ? `${who} 正在想` : n.kind === "score" ? `評審正在為「${n.stage}」打分` : "評審正在判決";
-  if (!RUN) return { text: doing + "…" };
+  if (!RUN) return isStuck(cur) ? { text: "卡住了，沒有在跑。可以按「重試」接著做，或「放棄」不判決。", err: true } : { text: doing + "…" };
   if (RUN.status === "completed" && RUN.conclusion === "failure") {
-    return { text: "上一步失敗了，辯論停住。按「暫停」再按「繼續」可以重試。", link: RUN.html_url, err: true };
+    return { text: "卡住了（上一步失敗，常見原因是額度用完）。可以按「重試」接著做，或「放棄」不判決。", link: RUN.html_url, err: true };
   }
   if (/queued|pending|waiting|requested/.test(RUN.status)) {
     return { text: `排隊中，等 GitHub 派機器（已等 ${ago(RUN.created_at)}）。下一位：${who}` };
@@ -501,15 +538,12 @@ function statusLine(cur) {
   return { text: `準備下一位：${who}…` };
 }
 
-function quotaCard() {
+let QUOTA_OPEN = false;
+function quotaRows() {
   const q = QUOTA && QUOTA.info;
-  const kids = [$("h2", { class: "h" }, "Claude 額度")];
-  if (!q) {
-    kids.push($("div", { class: "note" }, "還沒有資料。下一次有人發言後，Claude 回報了才會出現。"));
-    return $("div", { class: "card" }, kids);
-  }
-  const NAMES = { five_hour: "5 小時", seven_day: "7 天", seven_day_opus: "7 天（Opus）", seven_day_sonnet: "7 天（Sonnet）" };
-  const ST = { allowed: ["正常", "var(--ok)"], allowed_warning: ["接近上限", "var(--gold)"], rejected: ["已用完", "var(--con)"] };
+  if (!q) return [];
+  const NAMES = { five_hour: "5 小時", seven_day: "7 天", seven_day_opus: "7 天 Opus", seven_day_sonnet: "7 天 Sonnet" };
+  const SHORT = { five_hour: "5h", seven_day: "7d", seven_day_opus: "7d O", seven_day_sonnet: "7d S" };
   const pct = (u) => (u == null ? null : Math.round(u <= 1 ? u * 100 : u));
   const reset = (t) => {
     if (!t) return "";
@@ -519,28 +553,40 @@ function quotaCard() {
   const rows = [];
   const windows = q.unifiedWindows && typeof q.unifiedWindows === "object" ? q.unifiedWindows : {};
   for (const [k, w] of Object.entries(windows)) {
-    if (w && typeof w === "object") rows.push({ name: NAMES[k] || k, pct: pct(w.utilization), reset: reset(w.resetsAt), status: w.status });
+    if (w && typeof w === "object") rows.push({ name: NAMES[k] || k, short: SHORT[k] || k, pct: pct(w.utilization), reset: reset(w.resetsAt) });
   }
-  if (!rows.length) rows.push({ name: NAMES[q.rateLimitType] || "目前", pct: pct(q.utilization), reset: reset(q.resetsAt), status: q.status });
-  const st = ST[q.status] || [q.status || "未知", "var(--muted)"];
-  kids.push($("div", { class: "qhead" }, $("span", { class: "pill", style: "--c:" + st[1] }, st[0])));
-  rows.forEach((r) => {
-    const c = r.pct == null ? "var(--muted)" : r.pct >= 90 ? "var(--con)" : r.pct >= 70 ? "var(--gold)" : "var(--ok)";
-    kids.push($("div", { class: "qrow" },
-      $("div", { class: "qtop" }, $("b", {}, r.name), $("span", {}, r.pct == null ? (ST[r.status] || [""])[0] : "已用 " + r.pct + "%")),
-      r.pct == null ? null : $("div", { class: "bar" }, $("i", { style: `width:${Math.min(100, r.pct)}%;background:${c}` })),
-      r.reset ? $("div", { class: "qsub" }, r.reset) : null));
-  });
-  kids.push($("div", { class: "note" }, "更新於 " + QUOTA.at + "（最近一次發言時回報）。這是你整個 Claude Pro 的用量，跟你平常用 Claude 共用。"));
-  return $("div", { class: "card" }, kids);
+  if (!rows.length) rows.push({ name: NAMES[q.rateLimitType] || "目前", short: SHORT[q.rateLimitType] || "用量", pct: pct(q.utilization), reset: reset(q.resetsAt) });
+  return rows;
+}
+function renderQuota() {
+  const box = document.getElementById("quota");
+  if (!box) return;
+  const rows = quotaRows();
+  const col = (p) => (p == null ? "var(--muted)" : p >= 90 ? "var(--con)" : p >= 70 ? "var(--gold)" : "var(--ok)");
+  const mini = rows.length
+    ? rows.slice(0, 2).map((r) => $("div", { class: "qm" }, $("span", { class: "qk" }, r.short),
+        $("span", { class: "qb" }, $("i", { style: `width:${Math.min(100, r.pct || 0)}%;background:${col(r.pct)}` })),
+        $("span", { class: "qv", style: "color:" + col(r.pct) }, r.pct == null ? "–" : r.pct + "%")))
+    : [$("div", { class: "qm" }, $("span", { class: "qk" }, "額度"), $("span", { class: "qv" }, "–"))];
+  const detail = QUOTA_OPEN ? $("div", { class: "qd" },
+    $("b", {}, "Claude 額度"),
+    rows.length ? rows.map((r) => $("div", {}, `${r.name}：${r.pct == null ? "–" : "已用 " + r.pct + "%"}${r.reset ? "，" + r.reset : ""}`))
+      : $("div", {}, "還沒有資料，下一次發言後才會出現。"),
+    QUOTA ? $("div", { class: "qsub" }, "更新於 " + QUOTA.at + "。跟你平常用 Claude 共用。") : null) : null;
+  box.replaceChildren($("button", { class: "qbtn", "aria-label": "Claude 額度", onclick: () => { QUOTA_OPEN = !QUOTA_OPEN; renderQuota(); } }, mini), ...(detail ? [detail] : []));
 }
 
 function controlButtons(cur) {
   if (!getToken()) return null;
   const btns = [];
+  if (isStuck(cur)) {
+    btns.push($("button", { class: "btn go", disabled: BUSY, onclick: () => act("retry", cur.id) }, "重試"));
+    btns.push($("button", { class: "btn stop", disabled: BUSY, onclick: () => act("stop", cur.id) }, "放棄"));
+    return $("div", { class: "row" }, btns);
+  }
   if (cur.status === "running") btns.push($("button", { class: "btn", disabled: BUSY, onclick: () => act("pause", cur.id) }, "暫停"));
   if (cur.status === "paused") btns.push($("button", { class: "btn go", disabled: BUSY, onclick: () => act("resume", cur.id) }, "繼續"));
-  if (cur.status !== "ending") btns.push($("button", { class: "btn stop", disabled: BUSY, onclick: () => act("end", cur.id) }, "結束"));
+  if (cur.status === "running" || cur.status === "paused") btns.push($("button", { class: "btn stop", disabled: BUSY, onclick: () => act("end", cur.id) }, "結束"));
   return btns.length ? $("div", { class: "row" }, btns) : null;
 }
 
@@ -570,17 +616,16 @@ function newTopicCard() {
   const kids = [$("h2", { class: "h" }, "出新題目")];
   if (token && !SHOW_TOKEN_FORM) {
     kids.push(
-      $("textarea", { id: "topic", placeholder: "一行一題，可以一次貼很多題，會同時開打\n例如：早餐店的大冰奶該不該漲價", value: DRAFT,
+      $("textarea", { id: "topic", placeholder: "輸入辯題，一行一題", value: DRAFT,
         oninput: (e) => { DRAFT = e.target.value; } }),
       $("label", { class: "sel" }, "自由辯論",
         $("select", { onchange: (e) => { MAX = e.target.value; render(); } },
           [["3", "3 來回"], ["5", "5 來回"], ["10", "10 來回"], ["20", "20 來回"], ["0", "無限（按結束才停）"]]
             .map(([v, t]) => $("option", { value: v, selected: v === MAX }, t)))),
-      $("div", { class: "note" }, "流程：立論 → 質詢 → 駁論 → 自由辯論 → 結辯 → 評審判決，每個階段評審都會打分。",
-        MAX === "0" ? "無限模式會一直用你的 Claude 額度，直到你按「結束」。" : `一場約 ${15 + 2 * Number(MAX) + Math.ceil(Number(MAX) / 5)} 步（發言、打分、判決各算一步），每步 20 到 40 秒。`),
+      $("div", { class: "note" }, MAX === "0" ? "無限：按結束才停，會一直用額度" : `約 ${15 + 2 * Number(MAX) + Math.ceil(Number(MAX) / 5)} 步、${Math.round((15 + 2 * Number(MAX)) / 2)} 分鐘`),
       $("div", { class: "row" }, $("button", { class: "btn go", disabled: BUSY, onclick: () => act("start") }, "開始")));
   } else {
-    kids.push($("div", { class: "note" }, "要出題和控制，先貼上 GitHub 權杖。權杖只存在這支手機的瀏覽器，別人拿到網址也只能看。"));
+    kids.push($("div", { class: "note" }, "貼上 GitHub 權杖才能出題和控制（只存在這支手機）。"));
     const input = $("input", { type: "password", placeholder: "github_pat_…", autocomplete: "off", style: "margin-top:10px" });
     kids.push(input, $("div", { class: "row" }, $("button", { class: "btn go", disabled: BUSY, onclick: () => saveToken(input.value) }, "儲存權杖")));
   }
@@ -601,14 +646,15 @@ function listView() {
         d.totals ? $("span", {}, `${d.totals.pro}：${d.totals.con}`) : null)));
   const rest = DATA.length - SHOW_N;
   const list = actives();
-  const running = list.filter((v) => v.status !== "paused").length;
+  const running = list.filter((v) => (v.status === "running" || v.status === "ending") && !isStuck(v)).length;
+  const stuckN = list.filter(isStuck).length;
   return [
     newTopicCard(),
-    list.length ? $("h2", { class: "sec" }, `進行中 ${list.length} 場`, running > 1 ? `（同時 ${running} 台機器在跑）` : "") : null,
+    list.length ? $("h2", { class: "sec" }, `進行中 ${list.length} 場`,
+      running > 1 ? `（${running} 台機器在跑）` : "", stuckN ? `・卡住 ${stuckN} 場` : "") : null,
     bulkBar(list),
     list.map((v) => activeCard(v)),
-    quotaCard(),
-    $("div", { class: "card" }, $("h2", { class: "h" }, "所有場次"),
+    $("div", { class: "card" }, $("h2", { class: "h" }, `所有場次（${DATA.length}）`),
       items.length ? items : $("div", { class: "empty" }, "還沒有任何一場，出個題目開打吧"),
       rest > 0 ? $("button", { class: "btn fold", onclick: () => { SHOW_N += 10; render(); } }, `再顯示 10 場（還有 ${rest} 場）`) : null),
   ];
@@ -623,8 +669,6 @@ function citeIndex(d, m) {
 }
 
 function jumpTo(id, k) {
-  EXPANDED[id] = true;
-  render();
   const el = document.querySelector(`[data-cite="${k}"]`);
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -657,12 +701,7 @@ function detailView(id) {
   } else {
     const entries = d.rounds.flatMap((r) =>
       (r.items || r.msgs.map((m) => ({ type: "msg", ...m }))).map((x) => ({ stage: r.name, x })));
-    let start = 0;
-    if (!EXPANDED[id] && entries.length > FOLD_KEEP) {
-      start = entries.length - FOLD_KEEP;
-      head.append($("button", { class: "btn fold", onclick: () => { EXPANDED[id] = true; render(); } }, `展開前面 ${start} 段`));
-    }
-    entries.slice(start).forEach(({ stage, x }) => {
+    entries.forEach(({ stage, x }) => {
       if (stage !== lastStage) { head.append($("div", { class: "round" }, stage)); lastStage = stage; }
       head.append(x.type === "score" ? scoreCard(x) : bubble(x, citeIndex(d, x)));
     });
@@ -699,6 +738,7 @@ function render(force = true) {
   const m = location.hash.match(/^#\/d\/(.+)$/);
   const parts = m ? detailView(decodeURIComponent(m[1])) : listView();
   document.getElementById("app").replaceChildren(...parts.flat().filter(Boolean));
+  renderQuota();
 }
 
 // 有權杖：直接從 GitHub 讀最新的 data.json（不用等網站部署，最即時）
@@ -709,7 +749,7 @@ async function load(force = true) {
     try {
       const [data, runs] = await Promise.all([
         gh("/contents/site/data.json?ref=main", {}, true),
-        gh("/actions/workflows/" + WORKFLOW + "/runs?per_page=50"),
+        gh("/actions/workflows/" + WORKFLOW + "/runs?per_page=100"),
       ]);
       json = data;
       // 每一場取最近一次執行（執行名稱是「擂台 <id>」，清單新的在前）
@@ -727,14 +767,13 @@ async function load(force = true) {
       const res = await fetch("data.json?t=" + Date.now(), { cache: "no-store" });
       json = await res.json();
     } catch (e) {
-      document.getElementById("count").textContent = "讀取失敗";
+      NOTE = { text: "資料讀取失敗，稍後重新整理", kind: "err" };
     }
   }
   if (json) {
     DATA = json.debates || [];
     LIVE = Array.isArray(json.live) ? json.live : json.live ? [json.live] : [];
     QUOTA = json.quota || null;
-    document.getElementById("count").textContent = "共 " + DATA.length + " 場";
   }
   render(force);
 }
