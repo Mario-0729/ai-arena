@@ -12,8 +12,8 @@
 html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 -apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;-webkit-text-size-adjust:100%}
 a{color:inherit;text-decoration:none}
 button,textarea,select,input{font:inherit;color:inherit}
-.wrap{max-width:720px;margin:0 auto;padding:16px 16px calc(48px + env(safe-area-inset-bottom))}
-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 18px}
+.wrap{max-width:720px;margin:0 auto;padding:0 16px calc(48px + env(safe-area-inset-bottom))}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 -16px 14px;padding:calc(8px + env(safe-area-inset-top)) 16px 8px;position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}
 .logo{font-weight:900;font-size:24px;letter-spacing:.5px}
 .logo span{color:var(--accent)}
 .sub{color:var(--muted);font-size:13px}
@@ -107,22 +107,25 @@ h2.sec{font-size:13px;color:var(--muted);margin:22px 4px 10px;font-weight:700}
 .bulk{margin:-4px 0 14px}
 .bulk .row{margin-top:0}
 .bulk .btn{font-size:14px;padding:0 6px}
-.qmini{position:fixed;top:calc(10px + env(safe-area-inset-top));right:max(12px,calc((100vw - 720px) / 2 + 12px));z-index:20}
+.qmini{position:relative;flex:0 0 auto}
 .qbtn{display:block;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px 8px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.15)}
 .qm{display:flex;align-items:center;gap:5px;font-size:11px;line-height:1.5}
 .qk{color:var(--muted);width:20px;text-align:left}
 .qb{width:44px;height:5px;border-radius:9px;background:var(--panel2);overflow:hidden;display:inline-block}
 .qb i{display:block;height:100%}
 .qv{font-weight:800;width:30px;text-align:right}
-.qd{margin-top:6px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;width:220px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.qd{position:absolute;right:0;top:calc(100% + 6px);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;width:220px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
 .qd b{display:block;margin-bottom:4px;color:var(--muted);font-size:12px}
-header{padding-right:120px}
 .clamp .say{-webkit-line-clamp:2}
 .jr{display:flex;gap:8px;align-items:baseline;font-size:13px;margin-top:4px}
 .jn{color:var(--muted);flex:0 0 auto;white-space:nowrap}
 .js{flex:0 0 auto;font-weight:700}
 .js em{font-style:normal}
 .jc{color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.score.tap{cursor:pointer}
+.score.open .jr{align-items:flex-start}
+.score.open .jc{white-space:normal;overflow:visible}
+.more-h{margin-top:6px;font-size:11px;color:var(--gold);text-align:right}
 .votes{display:flex;gap:6px;margin:4px 0 10px}
 .vote{display:inline-flex;gap:4px;align-items:center;font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--c);color:var(--muted)}
 .vote b{color:var(--c)}
@@ -144,8 +147,8 @@ footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
       <div class="logo">AI <span>吵架</span>擂台</div>
       <div class="sub">你出題，Claude 自己跟自己吵</div>
     </a>
+    <div id="quota" class="qmini"></div>
   </header>
-  <div id="quota" class="qmini"></div>
   <main id="app"><div class="empty">擂台布置中…</div></main>
   <footer>所有發言由 Claude 生成，純屬娛樂</footer>
 </div>
@@ -295,9 +298,13 @@ function nextLabel(n) {
   return "評審判決";
 }
 function progressText(cur) {
-  if (!cur.stage) return cur.max ? `自由辯論 ${cur.max} 來回` : "自由辯論無上限";
-  if (cur.stage === "自由辯論") return cur.max ? `自由辯論 第 ${cur.free}／${cur.max} 來回` : `自由辯論 第 ${cur.free} 來回・無上限`;
-  return `${cur.stage}階段`;
+  const n = cur.next || {};
+  const stage = n.kind === "speech" ? n.stage : n.kind === "verdict" ? "判決" : cur.stage;
+  const free = n.kind === "speech" && n.stage === "自由辯論" && n.n ? n.n : cur.free;
+  if (!stage) return cur.max ? `自由辯論 ${cur.max} 來回` : "自由辯論無上限";
+  if (stage === "自由辯論") return cur.max ? `自由辯論 第 ${free}／${cur.max} 來回` : `自由辯論 第 ${free} 來回・無上限`;
+  if (stage === "判決") return "等待判決";
+  return `${stage}階段`;
 }
 
 // 一場的即時狀態：剛按的按鈕優先，其次 data.json
@@ -487,7 +494,7 @@ function statusPill(status) {
 }
 
 function winnerSpan(d) {
-  if (!d.winner) return null;
+  if (!d.winner) return $("span", { class: "pill" }, "沒有判決");
   return $("span", { class: "win", style: "--c:" + (d.winner === "平手" ? "var(--muted)" : color(d.winner)) },
     d.winner === "平手" ? "平手" : "勝者 " + d.winner);
 }
@@ -517,7 +524,8 @@ function scoreCard(x) {
   if (x.pro == null) return $("div", { class: "score" }, $("div", { class: "sh" }, $("b", {}, "評審打分")), $("div", { class: "sn" }, x.text));
   const lead = x.pro > x.con ? "pro" : x.con > x.pro ? "con" : "";
   const judges = x.judges || [];
-  return $("div", { class: "score" },
+  const hasNotes = judges.some((j) => j.note);
+  const card = $("div", { class: "score" + (hasNotes ? " tap" : "") },
     $("div", { class: "sh" }, $("b", {}, judges.length ? `評審團・滿分 ${judges.length * 10}` : "評審打分"),
       $("span", { class: "sp" }, $("em", { class: lead === "pro" ? "lead" : "", style: "color:var(--pro)" }, "正方 " + x.pro),
         "：", $("em", { class: lead === "con" ? "lead" : "", style: "color:var(--con)" }, x.con + " 反方"))),
@@ -526,7 +534,13 @@ function scoreCard(x) {
           $("span", { class: "jn" }, j.judge.slice(-1) + " " + j.style.replace("重", "")),
           $("span", { class: "js" }, $("em", { style: "color:var(--pro)" }, j.pro), "：", $("em", { style: "color:var(--con)" }, j.con)),
           j.note ? $("span", { class: "jc" }, j.note) : null))
-      : x.text ? $("div", { class: "sn" }, x.text) : null);
+      : x.text ? $("div", { class: "sn" }, x.text) : null,
+    hasNotes ? $("div", { class: "more-h" }, "點一下看完整講評") : null);
+  if (hasNotes) card.addEventListener("click", () => {
+    card.classList.toggle("open");
+    card.querySelector(".more-h").textContent = card.classList.contains("open") ? "點一下收起" : "點一下看完整講評";
+  });
+  return card;
 }
 
 // 累計比分
@@ -598,7 +612,8 @@ function renderQuota() {
     rows.length ? rows.map((r) => $("div", {}, `${r.name}：${r.pct == null ? "–" : "已用 " + r.pct + "%"}${r.reset ? "，" + r.reset : ""}`))
       : $("div", {}, "還沒有資料，下一次發言後才會出現。"),
     QUOTA ? $("div", { class: "qsub" }, "更新於 " + QUOTA.at + "。跟你平常用 Claude 共用。") : null) : null;
-  box.replaceChildren($("button", { class: "qbtn", "aria-label": "Claude 額度", onclick: () => { QUOTA_OPEN = !QUOTA_OPEN; renderQuota(); } }, mini), ...(detail ? [detail] : []));
+  if (detail) detail.addEventListener("click", (e) => e.stopPropagation());
+  box.replaceChildren($("button", { class: "qbtn", "aria-label": "Claude 額度", onclick: (e) => { e.stopPropagation(); QUOTA_OPEN = !QUOTA_OPEN; renderQuota(); } }, mini), ...(detail ? [detail] : []));
 }
 
 function controlButtons(cur) {
@@ -889,6 +904,8 @@ function schedulePoll(delay = POLL_MS) {
 }
 
 addEventListener("hashchange", () => { render(); scrollTo(0, 0); });
+// 點量表以外的地方就收起明細
+document.addEventListener("click", () => { if (QUOTA_OPEN) { QUOTA_OPEN = false; renderQuota(); } });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(false).then(() => schedulePoll()); });
 load().then(() => schedulePoll());
 </script>
