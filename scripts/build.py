@@ -19,6 +19,11 @@ SPEAKER = re.compile(r"^\*\*(.+?)\*\*\s*[：:]\s*(.*)$")
 
 SCORE_HEAD = re.compile(r"^### 評審打分(?:：正方 (\d+)｜反方 (\d+))?")
 QUOTE = re.compile(r"^[-•＊*]\s*(正方|反方)\s*[（(]([^）)]*)[）)]\s*[：:]\s*「(.+)」\s*$")
+JUDGE_ROW = re.compile(r"^[-•]\s*(評審[甲乙丙])[（(]([^）)]*)[）)]\s*[：:]\s*正方\s*(\d+)\s*｜\s*反方\s*(\d+)(?:\s*｜\s*(.*))?$")
+VOTE = re.compile(r"^\**(評審[甲乙丙])[^：:]*[：:]\s*\**(正方|反方|平手)\**\s*$")
+SPLIT = re.compile(r"勝者[^：:]*[：:]\s*\**\s*(?:正方|反方|平手)\**\s*[（(]\s*(\d)\s*[：:比]\s*(\d)\s*[）)]")
+BREAKDOWN = re.compile(r"^[-•]\s*(正方|反方)\s*[：:]\s*論點\s*(\d+)\s*｜\s*反駁\s*(\d+)\s*｜\s*表達\s*(\d+)")
+BEST = re.compile(r"^\**最佳發言\**\s*[：:]\s*(正方|反方)\s*[（(]([^）)]*)[）)]\s*[：:]\s*「(.+)」\s*$")
 VERDICT_NAMES = ("結算", "評審判決")
 
 
@@ -57,6 +62,11 @@ def parse(path: pathlib.Path) -> dict:
         if any(v in current["name"] for v in VERDICT_NAMES):
             current["text"].append(s)
             continue
+        jr = JUDGE_ROW.match(s.strip())
+        if jr and item is not None and item["type"] == "score":
+            item.setdefault("judges", []).append({"judge": jr[1], "style": jr[2], "pro": int(jr[3]),
+                                                  "con": int(jr[4]), "note": (jr[5] or "").strip()})
+            continue
         sc = SCORE_HEAD.match(s)
         if sc:
             item = {"type": "score", "pro": int(sc[1]) if sc[1] else None,
@@ -80,14 +90,23 @@ def parse(path: pathlib.Path) -> dict:
 
     verdict_sec = next((sec for sec in sections if any(v in sec["name"] for v in VERDICT_NAMES)), None)
     verdict_lines = verdict_sec["text"] if verdict_sec else []
-    quotes, rest = [], []
+    quotes, rest, votes, breakdown, best = [], [], [], {}, None
     for v in verdict_lines:
-        q = QUOTE.match(v.strip())
-        if q:
+        t = v.strip()
+        q, vo, bd, be = QUOTE.match(t), VOTE.match(t), BREAKDOWN.match(t), BEST.match(t)
+        if be:
+            best = {"who": be[1], "stage": be[2].strip(), "text": be[3].replace("**", "").strip()}
+        elif q:
             quotes.append({"who": q[1], "stage": q[2].strip(), "text": q[3].replace("**", "").strip()})
-        elif not re.match(r"^\s*關鍵發言\s*[：:]?\s*$", v):
+        elif vo:
+            votes.append({"judge": vo[1], "pick": vo[2]})
+        elif bd:
+            breakdown[bd[1]] = {"論點": int(bd[2]), "反駁": int(bd[3]), "表達": int(bd[4])}
+        elif not re.match(r"^\s*\**(關鍵發言|評分細項)\**\s*[：:]?\s*$", t):
             rest.append(v)
     verdict = "\n".join(rest).strip()
+    verdict = re.sub(r"\n\s*\n+", "\n", verdict)
+    sp = SPLIT.search(verdict)
     winner = ""
     wm = re.search(r"勝者[^：:]*[：:]\s*\**\s*([A-Za-z一-鿿]+)", verdict)
     if wm:
@@ -96,6 +115,7 @@ def parse(path: pathlib.Path) -> dict:
     scores = [x for r in rounds for x in r["items"] if x["type"] == "score" and x["pro"] is not None]
     item = {"id": stem, "time": time, "title": title or "（未命名）", "rounds": rounds,
             "verdict": verdict, "winner": winner, "quotes": quotes,
+            "votes": votes, "split": f"{sp[1]}：{sp[2]}" if sp else "", "breakdown": breakdown, "best": best,
             "totals": {"pro": sum(x["pro"] for x in scores), "con": sum(x["con"] for x in scores),
                        "n": len(scores)} if scores else None}
     if not rounds:
@@ -161,6 +181,8 @@ def main():
         st = states.get(d["id"])
         if st:
             d["status"], d["max"] = st["status"], st["max"]
+            if st.get("rematch"):
+                d["rematch"] = st["rematch"]
         else:
             d["status"] = "ended" if d["verdict"] else "stopped"
     OUT.parent.mkdir(parents=True, exist_ok=True)

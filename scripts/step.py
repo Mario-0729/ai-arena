@@ -72,7 +72,11 @@ def load_control(cid):
     except (TypeError, ValueError):
         mx = 3
     mx = 0 if mx <= 0 else min(MAX_CAP, mx)
-    return {"id": c["id"], "topic": topic, "cmd": cmd, "max": mx}
+    out = {"id": c["id"], "topic": topic, "cmd": cmd, "max": mx}
+    # rematch：同題再戰時，記住是哪一場的再戰
+    if ID_RE.match(str(c.get("rematch", ""))):
+        out["rematch"] = c["rematch"]
+    return out
 
 
 def debate_path(c):
@@ -294,8 +298,23 @@ def clean_speech(body):
     return re.sub(r"^\**(正方|反方|評審|主持人)[^：:\n]{0,8}\**\s*[：:]\s*", "", body).strip()
 
 
+JUDGES = [("評審甲", "重邏輯"), ("評審乙", "重表達"), ("評審丙", "重攻防")]
+PANEL_LINE = re.compile(r"(評審[甲乙丙])[^：:\n]*[：:]\s*正方\s*(\d{1,2})\s*[｜|/／]\s*反方\s*(\d{1,2})\s*(?:[｜|/／]\s*(.*))?")
+
+
+def parse_panel(body):
+    """三位評審各一行：評審甲：正方 8｜反方 7｜講評一句。回傳 [(評審, 風格, 正, 反, 講評)]。"""
+    clamp = lambda v: max(1, min(10, int(v)))
+    style = dict(JUDGES)
+    got = {}
+    for m in PANEL_LINE.finditer(body):
+        if m[1] not in got:
+            got[m[1]] = (m[1], style[m[1]], clamp(m[2]), clamp(m[3]), (m[4] or "").strip())
+    return [got[j] for j, _ in JUDGES if j in got]
+
+
 def parse_score(body):
-    """評審打分固定格式：正方：8／反方：7／講評：……"""
+    """（舊版單一評審）正方：8／反方：7／講評：……"""
     pro = re.search(r"正方[^0-9\n]{0,6}(\d{1,2})", body)
     con = re.search(r"反方[^0-9\n]{0,6}(\d{1,2})", body)
     note = re.search(r"講評\s*[：:]\s*(.+)", body, re.S)
@@ -338,11 +357,17 @@ def run(c):
         print(f"{s['stage']} {s['who']}（{s['role']}）發言完畢")
 
     elif s["kind"] == "score":
-        task = (f"你的任務：以評審身分，為剛才「{s['stage']}」階段（只看上面這段）的雙方表現打分，各 1 到 10 分。"
-                "只輸出下面三行，不要其他文字：\n正方：分數\n反方：分數\n講評：一句話，點出這階段誰的哪一招最有效")
-        got = parse_score(ask_claude(c, context_for_score(text, s["stage"]), task))
-        if got:
-            pro, con, note = got
+        task = (f"你的任務：扮演三位評審，為剛才「{s['stage']}」階段（只看上面這段）的雙方表現各自打分，1 到 10 分。"
+                "照「評審團」的風格，三位的看法可以不同。只輸出下面三行，不要其他文字：\n"
+                "評審甲：正方 分數｜反方 分數｜一句講評\n評審乙：正方 分數｜反方 分數｜一句講評\n評審丙：正方 分數｜反方 分數｜一句講評")
+        body = ask_claude(c, context_for_score(text, s["stage"]), task)
+        panel = parse_panel(body)
+        if panel:
+            pro, con = sum(p[2] for p in panel), sum(p[3] for p in panel)
+            rows = "\n".join(f"- {j}（{st}）：正方 {a}｜反方 {b}" + (f"｜{n}" if n else "") for j, st, a, b, n in panel)
+            text += f"\n\n### 評審打分：正方 {pro}｜反方 {con}\n\n{rows}"
+        elif parse_score(body):
+            pro, con, note = parse_score(body)
             text += f"\n\n### 評審打分：正方 {pro}｜反方 {con}\n\n{note}".rstrip()
         else:
             text += "\n\n### 評審打分\n\n（評審這次沒有照格式給分）"
@@ -350,8 +375,8 @@ def run(c):
 
     elif s["kind"] == "verdict":
         pro, con = totals(text)
-        task = (f"你的任務：以評審身分做最後判決。各階段打分加總：正方 {pro} 分、反方 {con} 分。"
-                "照「評審判決」的規則寫，引用的句子必須從上面發言裡一字不差地複製。")
+        task = (f"你的任務：扮演三位評審做最後判決。各階段三位評審打分加總：正方 {pro} 分、反方 {con} 分。"
+                "照「評審判決」的格式寫，三位各自投票，多數決。引用的句子必須從上面發言裡一字不差地複製。")
         body = ask_claude(c, context_for_verdict(text), task)
         text += f"\n\n## 評審判決\n\n{body}"
         print("判決完成")

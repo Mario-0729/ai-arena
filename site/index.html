@@ -88,7 +88,8 @@ h2.sec{font-size:13px;color:var(--muted);margin:22px 4px 10px;font-weight:700}
 @keyframes flash{0%,60%{background:rgba(255,197,61,.35)}}
 .score{margin:10px 0 10px 46px;padding:9px 12px;border-radius:12px;border:1px dashed var(--gold);font-size:14px}
 .sh{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.sh b{color:var(--gold);font-size:12px}
+.sh b{color:var(--gold);font-size:12px;white-space:nowrap}
+.sp{white-space:nowrap}
 .sp em{font-style:normal;font-weight:700}
 .sp em.lead{font-weight:900;font-size:16px}
 .sn{color:var(--muted);margin-top:4px}
@@ -117,6 +118,22 @@ h2.sec{font-size:13px;color:var(--muted);margin:22px 4px 10px;font-weight:700}
 .qd b{display:block;margin-bottom:4px;color:var(--muted);font-size:12px}
 header{padding-right:120px}
 .clamp .say{-webkit-line-clamp:2}
+.jr{display:flex;gap:8px;align-items:baseline;font-size:13px;margin-top:4px}
+.jn{color:var(--muted);flex:0 0 auto;white-space:nowrap}
+.js{flex:0 0 auto;font-weight:700}
+.js em{font-style:normal}
+.jc{color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.votes{display:flex;gap:6px;margin:4px 0 10px}
+.vote{display:inline-flex;gap:4px;align-items:center;font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--c);color:var(--muted)}
+.vote b{color:var(--c)}
+.bdr{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:14px}
+.bdr em{font-style:normal;font-weight:800;width:18px;text-align:center}
+.bdr .bbar{flex:1;margin:0}
+.bdk{width:34px;color:var(--muted);font-size:13px}
+.msg.best .bub{box-shadow:0 0 0 2px var(--accent)}
+.cite.bestb{background:var(--accent);color:#fff}
+.bestq{font-weight:700}
+.bp{margin-top:4px;font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
 </style>
 </head>
@@ -475,11 +492,13 @@ function winnerSpan(d) {
     d.winner === "平手" ? "平手" : "勝者 " + d.winner);
 }
 
-function bubble(m, cite) {
-  return $("div", { class: "msg" + (cite != null ? " cited" : ""), style: "--c:" + color(m.who), "data-cite": cite },
+function bubble(m, cite, best) {
+  return $("div", { class: "msg" + (cite != null ? " cited" : "") + (best ? " best" : ""), style: "--c:" + color(m.who),
+      "data-cite": cite, "data-best": best ? "1" : null },
     $("div", { class: "av" }, m.who.slice(0, 1)),
     $("div", { class: "bub" },
       $("div", { class: "who" }, m.who, m.role ? $("span", { class: "role" }, "・" + m.role) : null,
+        best ? $("span", { class: "cite bestb" }, "最佳發言") : null,
         cite != null ? $("span", { class: "cite" }, "評審引用") : null),
       $("div", { class: "say" }, rich(m.text))));
 }
@@ -497,11 +516,17 @@ function thinkingBubble(n) {
 function scoreCard(x) {
   if (x.pro == null) return $("div", { class: "score" }, $("div", { class: "sh" }, $("b", {}, "評審打分")), $("div", { class: "sn" }, x.text));
   const lead = x.pro > x.con ? "pro" : x.con > x.pro ? "con" : "";
+  const judges = x.judges || [];
   return $("div", { class: "score" },
-    $("div", { class: "sh" }, $("b", {}, "評審打分"),
+    $("div", { class: "sh" }, $("b", {}, judges.length ? `評審團・滿分 ${judges.length * 10}` : "評審打分"),
       $("span", { class: "sp" }, $("em", { class: lead === "pro" ? "lead" : "", style: "color:var(--pro)" }, "正方 " + x.pro),
         "：", $("em", { class: lead === "con" ? "lead" : "", style: "color:var(--con)" }, x.con + " 反方"))),
-    x.text ? $("div", { class: "sn" }, x.text) : null);
+    judges.length
+      ? judges.map((j) => $("div", { class: "jr" },
+          $("span", { class: "jn" }, j.judge.slice(-1) + " " + j.style.replace("重", "")),
+          $("span", { class: "js" }, $("em", { style: "color:var(--pro)" }, j.pro), "：", $("em", { style: "color:var(--con)" }, j.con)),
+          j.note ? $("span", { class: "jc" }, j.note) : null))
+      : x.text ? $("div", { class: "sn" }, x.text) : null);
 }
 
 // 累計比分
@@ -643,7 +668,9 @@ function listView() {
     $("a", { class: "item", href: "#/d/" + d.id },
       $("div", { class: "t" }, d.title),
       $("div", { class: "m" }, d.time, d.status === "ended" ? winnerSpan(d) : statusPill(d.status),
-        d.totals ? $("span", {}, `${d.totals.pro}：${d.totals.con}`) : null)));
+        d.split ? $("span", {}, d.split) : d.totals ? $("span", {}, `${d.totals.pro}：${d.totals.con}`) : null,
+        d.rematch ? $("span", {}, "再戰") : null),
+      d.best ? $("div", { class: "bp" }, "「" + d.best.text + "」") : null));
   const rest = DATA.length - SHOW_N;
   const list = actives();
   const running = list.filter((v) => (v.status === "running" || v.status === "ending") && !isStuck(v)).length;
@@ -654,6 +681,7 @@ function listView() {
       running > 1 ? `（${running} 台機器在跑）` : "", stuckN ? `・卡住 ${stuckN} 場` : "") : null,
     bulkBar(list),
     list.map((v) => activeCard(v)),
+    statsCard(),
     $("div", { class: "card" }, $("h2", { class: "h" }, `所有場次（${DATA.length}）`),
       items.length ? items : $("div", { class: "empty" }, "還沒有任何一場，出個題目開打吧"),
       rest > 0 ? $("button", { class: "btn fold", onclick: () => { SHOW_N += 10; render(); } }, `再顯示 10 場（還有 ${rest} 場）`) : null),
@@ -668,8 +696,74 @@ function citeIndex(d, m) {
   return k >= 0 ? k : null;
 }
 
+function verdictCard(d, id) {
+  const quotes = d.quotes || [];
+  const votes = d.votes || [];
+  const bd = d.breakdown || {};
+  const keys = ["論點", "反駁", "表達"];
+  return $("div", { class: "card verdict" }, $("h2", {}, "評審判決"),
+    votes.length ? $("div", { class: "votes" }, votes.map((v) =>
+      $("span", { class: "vote", style: "--c:" + (v.pick === "平手" ? "var(--muted)" : color(v.pick)) }, v.judge.slice(-1), $("b", {}, v.pick)))) : null,
+    $("div", { class: "say" }, rich(d.verdict)),
+    bd["正方"] && bd["反方"] ? [$("h3", {}, "評分細項"), keys.map((k) => {
+      const a = bd["正方"][k], b = bd["反方"][k];
+      return $("div", { class: "bdr" }, $("span", { class: "bdk" }, k),
+        $("em", { style: "color:var(--pro)" }, a),
+        $("span", { class: "bbar" }, $("i", { style: `width:${(a / (a + b || 1)) * 100}%;background:var(--pro)` }), $("i", { style: `width:${(b / (a + b || 1)) * 100}%;background:var(--con)` })),
+        $("em", { style: "color:var(--con)" }, b));
+    })] : null,
+    d.best ? [$("h3", {}, "最佳發言"), $("a", { class: "quote bestq", href: "#/d/" + id, onclick: (e) => { e.preventDefault(); jumpTo(id, "best"); } },
+      $("b", { style: "color:" + color(d.best.who) }, d.best.who + (d.best.stage ? "・" + d.best.stage : "")), "「" + d.best.text + "」")] : null,
+    quotes.length ? [$("h3", {}, "關鍵發言"), quotes.map((q, k) =>
+      $("a", { class: "quote", href: "#/d/" + id, onclick: (e) => { e.preventDefault(); jumpTo(id, k); } },
+        $("b", { style: "color:" + color(q.who) }, q.who + (q.stage ? "・" + q.stage : "")), "「" + q.text + "」"))] : null);
+}
+
+async function rematch(d) {
+  if (!confirm("同一題再打一場？會用額度，打完可以跟這場對照。")) return;
+  const ctrl = { id: taipeiStamp(), topic: d.title, cmd: "run", max: Number(d.max) || 3, rematch: d.id };
+  BUSY = true; render();
+  try {
+    await writeControl(ctrl, "同題再戰");
+    await dispatch(ctrl.id);
+    PENDING[ctrl.id] = { ctrl, at: Date.now() };
+    location.hash = "#/d/" + ctrl.id;
+  } catch (e) {
+    alert(e.message);
+  }
+  BUSY = false;
+  render();
+  schedulePoll(1500);
+}
+
+// 戰績：只算正反方賽制的場次
+function statsCard() {
+  const done = DATA.filter((d) => ["正方", "反方", "平手"].includes(d.winner));
+  if (!done.length) return null;
+  const n = (w) => done.filter((d) => d.winner === w).length;
+  const pro = n("正方"), con = n("反方"), tie = n("平手");
+  const scored = done.filter((d) => d.totals && d.totals.n);
+  const avg = (k) => scored.length ? Math.round(scored.reduce((a, d) => a + d.totals[k], 0) / scored.length) : 0;
+  const splits = done.filter((d) => d.split);
+  const sweep = splits.filter((d) => /3：0/.test(d.split)).length;
+  const pct = (x) => Math.round((x / done.length) * 100);
+  return $("div", { class: "card" }, $("h2", { class: "h" }, `戰績（${done.length} 場）`),
+    $("div", { class: "bl" }, $("b", { style: "color:var(--pro)" }, `正方 ${pro} 勝`), $("span", {}, tie ? `平手 ${tie}` : ""), $("b", { style: "color:var(--con)" }, `${con} 勝 反方`)),
+    $("div", { class: "bbar" }, $("i", { style: `width:${pct(pro)}%;background:var(--pro)` }), $("i", { style: `width:${pct(tie)}%;background:var(--muted)` }), $("i", { style: `width:${pct(con)}%;background:var(--con)` })),
+    $("div", { class: "note" }, [
+      `正方勝率 ${pct(pro)}%`,
+      scored.length ? `平均比分 ${avg("pro")}：${avg("con")}` : "",
+      splits.length ? `評審團 ${splits.length} 場中一致通過 ${sweep} 場` : "",
+    ].filter(Boolean).join("・")));
+}
+
+function isBest(d, m) {
+  const norm = (t) => String(t).replace(/\*\*/g, "").replace(/\s+/g, "");
+  return !!(d.best && d.best.who === m.who && d.best.text && norm(m.text).includes(norm(d.best.text)));
+}
+
 function jumpTo(id, k) {
-  const el = document.querySelector(`[data-cite="${k}"]`);
+  const el = document.querySelector(k === "best" ? "[data-best]" : `[data-cite="${k}"]`);
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.classList.add("flash");
@@ -703,7 +797,7 @@ function detailView(id) {
       (r.items || r.msgs.map((m) => ({ type: "msg", ...m }))).map((x) => ({ stage: r.name, x })));
     entries.forEach(({ stage, x }) => {
       if (stage !== lastStage) { head.append($("div", { class: "round" }, stage)); lastStage = stage; }
-      head.append(x.type === "score" ? scoreCard(x) : bubble(x, citeIndex(d, x)));
+      head.append(x.type === "score" ? scoreCard(x) : bubble(x, citeIndex(d, x), isBest(d, x)));
     });
   }
   if (isCur && (status === "running" || status === "ending")) {
@@ -717,12 +811,19 @@ function detailView(id) {
   } else if (status === "stopped") {
     out.push($("div", { class: "card live" }, "這場沒打完就換題了"));
   }
-  if (d.verdict) {
-    const quotes = d.quotes || [];
-    out.push($("div", { class: "card verdict" }, $("h2", {}, "評審判決"), $("div", { class: "say" }, rich(d.verdict)),
-      quotes.length ? [$("h3", {}, "關鍵發言"), quotes.map((q, k) =>
-        $("a", { class: "quote", href: "#/d/" + id, onclick: (e) => { e.preventDefault(); jumpTo(id, k); } },
-          $("b", { style: "color:" + color(q.who) }, q.who + (q.stage ? "・" + q.stage : "")), "「" + q.text + "」"))] : null));
+  if (d.verdict) out.push(verdictCard(d, id));
+  // 同題再戰：這場是哪場的再戰、這場有沒有被再戰
+  const parent = d.rematch ? DATA.find((x) => x.id === d.rematch) : null;
+  const children = DATA.filter((x) => x.rematch === d.id);
+  if (parent || children.length) {
+    const res = (x) => (x.winner ? (x.winner === "平手" ? "平手" : x.winner + "勝") + (x.split ? " " + x.split : "") : "還沒結束");
+    out.push($("div", { class: "card" }, $("h2", { class: "h" }, "同題對照"),
+      parent ? $("a", { class: "item", href: "#/d/" + parent.id }, $("div", { class: "t" }, "上一場：" + res(parent)), $("div", { class: "m" }, parent.time)) : null,
+      $("div", { class: "item" }, $("div", { class: "t" }, "這一場：" + res(d)), $("div", { class: "m" }, d.time)),
+      children.map((c) => $("a", { class: "item", href: "#/d/" + c.id }, $("div", { class: "t" }, "再戰：" + res(c)), $("div", { class: "m" }, c.time)))));
+  }
+  if (status === "ended" && getToken() && d.rounds.length) {
+    out.push($("div", { class: "row" }, $("button", { class: "btn", disabled: BUSY, onclick: () => rematch(d) }, "同題再打一場")));
   }
   const newer = DATA[i - 1], older = DATA[i + 1];
   out.push($("div", { class: "nav" },
