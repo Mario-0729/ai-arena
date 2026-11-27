@@ -9,6 +9,7 @@ Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub A
 ## 使用者
 - Mario 只有 iPhone，沒有電腦。需要他動手的步驟要寫成手機瀏覽器點得到的路徑。
 - 回覆用繁體中文、全形標點、不用 emoji，先講結論、短一點。
+- 2026-11-27 Mario 授權：改動直接推上 main 生效，不用再開 PR 等他合併（「全部同意」）。
 
 ## 檔案
 | 路徑 | 作用 |
@@ -17,7 +18,7 @@ Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub A
 | `.github/workflows/deploy.yml` | `build` 工作：跑 build.py、commit `site/data.json` 和 README（只有這裡寫這兩個檔），上傳；`deploy` 工作：部署到 GitHub Pages。兩個工作各自排隊、排隊中的被新的取代。辯論每步、改了 `site/index.html` 或 `scripts/` 推上 main、或手動都會跑 |
 | `controls/<id>.json` | **只由網頁寫入**，一場一個：`{"id","topic","cmd":"run/pause/end/stop","max"}`（stop＝放棄：不再打、不判決，顯示「中斷」）。`max` 為 0 代表無限。id 是台北時間 `YYYY-MM-DD_HHMMSS`，一次開多題時加 `-1`、`-2`… |
 | `quota/<id>.json` | 每場各存 Claude Code（`--output-format stream-json`）回報的 `rate_limit_event.rate_limit_info`（狀態、5 小時／7 天用量比例、重置時間）。build.py 取 `at` 最新的一份 |
-| `prompt.md` | 正方、反方、評審的規則（字數、重點標記、打分標準、判決格式）。改風格主要改這裡；賽制順序在 step.py |
+| `prompt.md` | 正方、反方、評審的規則（字數、重點標記、打分標準、判決格式）。2026-11-27 Mario 嫌太長，字數砍半：立論／駁論／結辯 120 字、質詢／自由辯論 60 字、判決理由一到兩句。改風格主要改這裡；賽制順序在 step.py |
 | `scripts/step.py` | 賽制狀態機。讀 `controls/<id>.json` 和戰況檔決定下一步：`plan <id>` 印出 speech/score/verdict/close/none，`run <id>` 執行（會呼叫 claude）。階段標題、名字、打分標題都由程式寫，Claude 只寫內容；打分由程式解析「正方：8／反方：7／講評：…」。發言時給立論全文加最近 10 段；打分只給該階段；判決給全文（太長截中間）並附打分加總。無限模式自由辯論 200 來回自動進結辯當保險 |
 | `debates/<id>.md` | 每場戰況。第一行 `# 辯題`；`## 立論` 等階段標題；發言 `**正方｜立論**：內容`（重點句用 `**…**`）；打分 `### 評審打分：正方 8｜反方 7` 下一段講評；最後 `## 評審判決`：「勝者：…」「理由：…」「關鍵發言：」加 `- 正方（駁論）：「原句」`。2026-11-26 早期的場次是舊格式（`## 第 N 回合`、`**正方**：`、`## 主持人結算`），build.py 兩種都吃 |
 | `scripts/build.py` | 把 `debates/*.md` 轉成 `site/data.json`（含每場狀態、各階段的發言與打分 `items`、累計比分 `totals`、評審引用 `quotes`、還沒結束的場次 `live` 陣列（含 `next` 下一步）、額度 `quota`），並重寫 README；解析失敗的場次會帶 `raw` 原文 |
