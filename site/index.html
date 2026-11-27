@@ -285,6 +285,7 @@ let NOTE = null;    // { text, kind }
 let BUSY = false;
 let SHOW_TOKEN_FORM = false;
 let DRAFT = "";
+let REMATCH_OF = null; // 同題再戰：帶入出題區後記住是哪一場
 let MAX = "3";
 let SHOW_N = 10;      // 所有場次先顯示幾場
 
@@ -452,13 +453,15 @@ async function startMany() {
   try {
     for (const [i, topic] of lines.entries()) {
       NOTE = { text: `送出中 ${i + 1}／${lines.length}…`, kind: "" }; render();
-      const ctrl = { id: lines.length > 1 ? `${stamp}-${i + 1}` : stamp, topic: topic.slice(0, 200), cmd: "run", max: Number(MAX) };
+      const ctrl = { id: lines.length > 1 ? `${stamp}-${i + 1}` : stamp, topic: topic.slice(0, 200), cmd: "run", max: Number(MAX),
+        ...(REMATCH_OF && lines.length === 1 ? { rematch: REMATCH_OF.id } : {}) };
       await writeControl(ctrl, "開始");
       await dispatch(ctrl.id);
       PENDING[ctrl.id] = { ctrl, at: Date.now() };
       ok++;
     }
     DRAFT = "";
+    REMATCH_OF = null;
     NOTE = { text: lines.length > 1 ? `${lines.length} 場同時開打。` : "已送出，正方準備開口。", kind: "ok" };
   } catch (e) {
     NOTE = { text: (ok ? `已開 ${ok} 場，第 ${ok + 1} 場失敗：` : "") + e.message, kind: "err" };
@@ -653,7 +656,11 @@ function activeCard(cur) {
 
 function newTopicCard() {
   const token = getToken();
-  const kids = [$("h2", { class: "h" }, "出新題目")];
+  const kids = [$("h2", { class: "h" }, REMATCH_OF ? "同題再戰" : "出新題目")];
+  if (REMATCH_OF && token && !SHOW_TOKEN_FORM) {
+    kids.push($("div", { class: "note" }, "已帶入上一場的題目和設定，可以先改再按開始。打完會跟上一場對照。 ",
+      $("button", { class: "link", onclick: () => { REMATCH_OF = null; DRAFT = ""; render(); } }, "取消")));
+  }
   if (token && !SHOW_TOKEN_FORM) {
     kids.push(
       $("textarea", { id: "topic", placeholder: "輸入辯題，一行一題", value: DRAFT,
@@ -734,21 +741,18 @@ function verdictCard(d, id) {
         $("b", { style: "color:" + color(q.who) }, q.who + (q.stage ? "・" + q.stage : "")), "「" + q.text + "」"))] : null);
 }
 
-async function rematch(d) {
-  if (!confirm("同一題再打一場？會用額度，打完可以跟這場對照。")) return;
-  const ctrl = { id: taipeiStamp(), topic: d.title, cmd: "run", max: Number(d.max) || 3, rematch: d.id };
-  BUSY = true; render();
-  try {
-    await writeControl(ctrl, "同題再戰");
-    await dispatch(ctrl.id);
-    PENDING[ctrl.id] = { ctrl, at: Date.now() };
-    location.hash = "#/d/" + ctrl.id;
-  } catch (e) {
-    alert(e.message);
-  }
-  BUSY = false;
+// 同題再打一場：把題目和設定帶進出題區，改完再按開始
+function rematch(d) {
+  DRAFT = d.title;
+  const m = String(Number(d.max) || 3);
+  MAX = ["3", "5", "10", "20", "0"].includes(m) ? m : "3";
+  REMATCH_OF = { id: d.id, title: d.title };
+  NOTE = null;
+  location.hash = "#/";
   render();
-  schedulePoll(1500);
+  scrollTo(0, 0);
+  const t = document.getElementById("topic");
+  if (t) t.focus();
 }
 
 // 戰績：只算正反方賽制的場次
@@ -838,7 +842,7 @@ function detailView(id) {
       children.map((c) => $("a", { class: "item", href: "#/d/" + c.id }, $("div", { class: "t" }, "再戰：" + res(c)), $("div", { class: "m" }, c.time)))));
   }
   if (status === "ended" && getToken() && d.rounds.length) {
-    out.push($("div", { class: "row" }, $("button", { class: "btn", disabled: BUSY, onclick: () => rematch(d) }, "同題再打一場")));
+    out.push($("div", { class: "row" }, $("button", { class: "btn", disabled: BUSY, onclick: () => rematch(d) }, "再來一局（帶入題目和設定）")));
   }
   const newer = DATA[i - 1], older = DATA[i + 1];
   out.push($("div", { class: "nav" },
