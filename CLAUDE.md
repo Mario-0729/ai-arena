@@ -15,13 +15,13 @@ Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub A
 |---|---|
 | `.github/workflows/arena.yml` | 只由網頁（或手動 Run workflow，要填場次 id）觸發，輸入 `id`。每次只做一步：正方或反方講一段、或結算 → 只 commit 這場自己的檔案 → 觸發「部署網頁」→ 還要繼續就帶同一個 id 再觸發自己。concurrency 用 `arena-<id>` 分開，所以各場平行、同一場依序。執行名稱是「擂台 <id>」，網頁靠它對應每場的執行狀態 |
 | `.github/workflows/deploy.yml` | `build` 工作：跑 build.py、commit `site/data.json` 和 README（只有這裡寫這兩個檔），上傳；`deploy` 工作：部署到 GitHub Pages。兩個工作各自排隊、排隊中的被新的取代。辯論每步、改了 `site/index.html` 或 `scripts/` 推上 main、或手動都會跑 |
-| `controls/<id>.json` | **只由網頁寫入**，一場一個：`{"id","topic","cmd":"run/pause/end","max"}`。`max` 為 0 代表無限。id 是台北時間 `YYYY-MM-DD_HHMMSS`，一次開多題時加 `-1`、`-2`… |
+| `controls/<id>.json` | **只由網頁寫入**，一場一個：`{"id","topic","cmd":"run/pause/end/stop","max"}`（stop＝放棄：不再打、不判決，顯示「中斷」）。`max` 為 0 代表無限。id 是台北時間 `YYYY-MM-DD_HHMMSS`，一次開多題時加 `-1`、`-2`… |
 | `quota/<id>.json` | 每場各存 Claude Code（`--output-format stream-json`）回報的 `rate_limit_event.rate_limit_info`（狀態、5 小時／7 天用量比例、重置時間）。build.py 取 `at` 最新的一份 |
 | `prompt.md` | 正方、反方、評審的規則（字數、重點標記、打分標準、判決格式）。改風格主要改這裡；賽制順序在 step.py |
 | `scripts/step.py` | 賽制狀態機。讀 `controls/<id>.json` 和戰況檔決定下一步：`plan <id>` 印出 speech/score/verdict/close/none，`run <id>` 執行（會呼叫 claude）。階段標題、名字、打分標題都由程式寫，Claude 只寫內容；打分由程式解析「正方：8／反方：7／講評：…」。發言時給立論全文加最近 10 段；打分只給該階段；判決給全文（太長截中間）並附打分加總。無限模式自由辯論 200 來回自動進結辯當保險 |
 | `debates/<id>.md` | 每場戰況。第一行 `# 辯題`；`## 立論` 等階段標題；發言 `**正方｜立論**：內容`（重點句用 `**…**`）；打分 `### 評審打分：正方 8｜反方 7` 下一段講評；最後 `## 評審判決`：「勝者：…」「理由：…」「關鍵發言：」加 `- 正方（駁論）：「原句」`。2026-11-26 早期的場次是舊格式（`## 第 N 回合`、`**正方**：`、`## 主持人結算`），build.py 兩種都吃 |
 | `scripts/build.py` | 把 `debates/*.md` 轉成 `site/data.json`（含每場狀態、各階段的發言與打分 `items`、累計比分 `totals`、評審引用 `quotes`、還沒結束的場次 `live` 陣列（含 `next` 下一步）、額度 `quota`），並重寫 README；解析失敗的場次會帶 `raw` 原文 |
-| `site/index.html` | 單檔網頁（無外部依賴）：出題（一行一題）、每場進行中的精簡卡片（進度、比分、狀態、最新一句、暫停／繼續／結束）、兩場以上時的「全部暫停／全部繼續／全部結束」（逐場改控制檔並觸發）、Claude 額度、場次列表（先 10 場，按鈕再展開）、單場頁（階段標題、角色、重點句螢光、打分卡、比分條、只顯示最後 12 段可展開、評審引用的發言加框、點關鍵發言會跳過去）。進行中每 10 秒自動更新 |
+| `site/index.html` | 單檔網頁（無外部依賴）：右上角固定的小額度量表（5h／7d，點開看重置時間）、出題（一行一題）、每場進行中的精簡卡片（進度、比分、狀態、最新一句、暫停／繼續／結束；卡住時改成重試／放棄）、兩場以上時的「全部暫停／全部繼續／全部結束」、兩場以上卡住時的「重試卡住的／放棄卡住的」、場次列表（先 10 場，按鈕再展開）、單場頁（從頭顯示、階段標題、角色、重點句螢光、打分卡、比分條、評審引用的發言加框、點關鍵發言會跳過去）。「卡住」＝該場最近一次執行失敗（常見是額度用完），或結算中卻沒有執行在跑。進行中每 10 秒自動更新 |
 | `site/data.json` | 轉檔產物，只由 deploy.yml 的 build 工作 commit |
 | `README.md` | **每場自動覆寫**成場次目錄，不要手寫內容在這裡 |
 
@@ -30,7 +30,7 @@ Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub A
 - 權杖是 fine-grained personal access token，只選這個 repo，權限 Contents、Actions 都是 Read and write。建立網址：https://github.com/settings/personal-access-tokens/new 。過期就重建，貼到網頁「換權杖」。
 - 有權杖時，網頁直接從 GitHub API 讀 `site/data.json` 和最近 50 次 arena 執行，每 10 秒一次（2 個請求），所以 build 工作一 commit 就看得到，不用等部署；按了按鈕到資料跟上之前，網頁先照按的顯示（最多 3 分鐘）；也會顯示排隊中、誰在想、上一步失敗（附連結）。
 - 沒有權杖的人打開網址只能看，不能按，資料來自網站上的 data.json（要等部署）。
-- 暫停只是改 control.json，正在打的回合會打完才停。打到一半當掉（例如 Claude 額度用完），狀態會卡在「進行中」，按暫停再按繼續就會重新觸發。
+- 暫停只是改控制檔，正在講的那段會講完才停。打到一半當掉（例如 Claude 額度用完），網頁會顯示「卡住了」，按「重試」重新觸發（不改控制檔），按「放棄」寫 cmd=stop。
 - 實測每段發言約 20 到 40 秒（GitHub 排隊、裝 Claude Code、Claude 思考）。回合上限網頁可選 3／5／10／20／無限，有上限時程式最多 30。
 
 ## Secrets（repo → Settings → Secrets and variables → Actions）
@@ -45,6 +45,8 @@ Mario 的個人測試專案。Mario 在網頁上出辯題、按開始，GitHub A
 - 新玩法已上線：repo 公開、Pages 開好、Mario 手機已存權杖。第一場「你媽應該跟我在一起」3 回合實跑成功，反方勝（那時還是單一 control.json，已搬到 controls/）。
 - 之後加了：一段一段發言、即時狀態、額度顯示、無限模式、多題同時打（最多 20 場），都已實跑過；額度回報實跑確認有效（5 小時、7 天用量比例）。
 - 再之後改成真實賽制＋階段打分＋重點標記＋評審引用＋列表精簡，已實跑成功：「在門口交朋友，是犯罪」反方 37：29 勝、「啞巴用手…」反方 34：28 勝，兩場的評審引用 8 句全部逐字對到原句。
+- 2026-11-26 一次開 10 場把 5 小時額度燒到 99%，10 場卡在「結算中」；當時網頁對結算中沒有任何按鈕，後來加了重試／放棄。
+- 2026-11-27 GitHub 上的 `CLAUDE_CODE_OAUTH_TOKEN` 變成空的（原因不明），執行時 Claude 回「Not logged in」。在雲端 session 用 pty 跑 `claude setup-token`（隔離 HOME），Mario 在手機登入後把授權碼貼回來，產生新金鑰存成檔案用 SendUserFile 給他貼到 GitHub，之後刪掉檔案。實測可用（「鳳梨可以放在披薩上」整場跑完）。
 - 踩過的坑：PR 6 改了 plan 的輸出名稱（speech/score），忘了改 arena.yml「安裝 Claude Code」的條件，導致沒裝 Claude 就呼叫而失敗（PR 7 修正）。改 step.py 的 plan 輸出時，要一起檢查 arena.yml。
 
 ## 網頁（GitHub Pages）
