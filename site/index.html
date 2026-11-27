@@ -137,6 +137,30 @@ h2.sec{font-size:13px;color:var(--muted);margin:22px 4px 10px;font-weight:700}
 .cite.bestb{background:var(--accent);color:#fff}
 .bestq{font-weight:700}
 .bp{margin-top:4px;font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tt{display:block;font-weight:800;font-size:18px;line-height:1.4}
+.steps{display:flex;gap:4px;margin:12px 0 6px}
+.st{flex:1;text-align:center;font-size:11px;color:var(--muted);white-space:nowrap}
+.st i{display:block;height:6px;border-radius:9px;background:var(--panel2);margin-bottom:4px}
+.st.done i{background:var(--ok)}
+.st.now i{background:var(--accent)}
+.st.now{color:var(--text);font-weight:800}
+.steps.live .st.now i{animation:blink 1.2s infinite}
+.board2{display:flex;align-items:center;gap:10px;margin:8px 0 4px}
+.board2 b{font-size:17px;min-width:26px;text-align:center}
+.board2 .bbar{flex:1;margin:0}
+.m2{display:flex;gap:10px;align-items:center;margin-top:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.chip b{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:7px;background:var(--c);color:#fff;font-size:12px}
+.chip .dots i{background:var(--c)}
+.item .t{font-size:17px}
+.item .m{gap:10px;margin-top:6px}
+.wb{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:7px;background:var(--c);color:#fff;font-weight:900;font-size:12px}
+.vd{display:inline-flex;gap:3px}
+.vd i{width:7px;height:7px;border-radius:50%;background:var(--c)}
+.mb{display:inline-flex;width:72px;height:6px;border-radius:9px;overflow:hidden;background:var(--panel2)}
+.mb i{display:block;height:100%}
+.rm{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:0 5px}
+.dt{margin-left:auto;font-size:12px;color:var(--muted)}
 footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
 </style>
 </head>
@@ -145,7 +169,6 @@ footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
   <header>
     <a href="#/">
       <div class="logo">AI <span>吵架</span>擂台</div>
-      <div class="sub">你出題，Claude 自己跟自己吵</div>
     </a>
     <div id="quota" class="qmini"></div>
   </header>
@@ -550,11 +573,35 @@ function scoreCard(x) {
 function scoreboard(t) {
   if (!t) return null;
   const sum = t.pro + t.con || 1;
-  return $("div", { class: "board" },
-    $("div", { class: "bl" }, $("b", { style: "color:var(--pro)" }, "正方 " + t.pro),
-      $("span", {}, `評審打分 ${t.n} 次累計`), $("b", { style: "color:var(--con)" }, t.con + " 反方")),
+  return $("div", { class: "board2" }, $("b", { style: "color:var(--pro)" }, t.pro),
     $("div", { class: "bbar" }, $("i", { style: `width:${(t.pro / sum) * 100}%;background:var(--pro)` }),
-      $("i", { style: `width:${(t.con / sum) * 100}%;background:var(--con)` })));
+      $("i", { style: `width:${(t.con / sum) * 100}%;background:var(--con)` })),
+    $("b", { style: "color:var(--con)" }, t.con));
+}
+
+// 賽程進度條：立 質 駁 自 結 判
+const STEPS = ["立論", "質詢", "駁論", "自由辯論", "結辯", "判決"];
+function stepIndex(cur) {
+  const n = nextOf(cur);
+  if (n.kind === "verdict" || n.kind === "close") return 5;
+  const i = STEPS.indexOf(n.stage || cur.stage);
+  return i < 0 ? 0 : i;
+}
+function stepper(cur) {
+  const at = stepIndex(cur);
+  const n = nextOf(cur);
+  return $("div", { class: "steps" + (cur.status === "running" || cur.status === "ending" ? " live" : "") },
+    STEPS.map((st, i) => $("div", { class: "st" + (i < at ? " done" : i === at ? " now" : "") },
+      $("i"), st.slice(0, 1) + (i === 3 && i === at && cur.max && n.n ? ` ${n.n}/${cur.max}` : ""))));
+}
+
+// 現在誰在想：小頭像＋點點
+function whoChip(cur) {
+  const n = nextOf(cur);
+  const who = n.kind === "speech" ? n.who : "評審";
+  return $("span", { class: "chip", style: "--c:" + color(who) }, $("b", {}, who.slice(0, 1)),
+    n.kind === "speech" ? n.role || n.stage : n.kind === "score" ? "打分" : "判決",
+    $("span", { class: "dots" }, $("i"), $("i"), $("i")));
 }
 
 function ago(iso) {
@@ -641,16 +688,19 @@ function statusNote(cur, cls = "note status") {
 
 // 一場進行中的卡片（精簡）：題目、進度、比分、狀態、最新一句、按鈕
 function activeCard(cur) {
-  const msgs = cur.debate ? cur.debate.rounds.flatMap((r) => r.msgs) : [];
-  const last = msgs[msgs.length - 1];
+  const stuck = isStuck(cur);
+  const RUN = RUNS[cur.id];
+  const queued = RUN && /queued|pending|waiting|requested/.test(RUN.status);
   return $("div", { class: "card" },
-    $("div", { class: "now" },
-      $("a", { class: "t", href: "#/d/" + cur.id }, cur.topic),
-      $("div", { class: "m" }, statusPill(cur.status), progressText(cur))),
+    $("a", { class: "tt", href: "#/d/" + cur.id }, cur.topic),
+    stepper(cur),
     scoreboard(cur.debate && cur.debate.totals),
-    statusNote(cur),
-    last ? $("a", { class: "clamp", href: "#/d/" + cur.id }, bubble(last)) : null,
-    msgs.length ? $("a", { class: "more", href: "#/d/" + cur.id }, "看整場（" + msgs.length + " 段）→") : null,
+    $("div", { class: "m2" },
+      stuck ? $("span", { class: "pill", style: "--c:var(--con)" }, "卡住了")
+        : cur.status === "paused" ? statusPill("paused")
+        : queued ? $("span", { class: "pill" }, "排隊中")
+        : whoChip(cur),
+      stuck && RUN && RUN.html_url ? $("a", { class: "link", href: RUN.html_url, target: "_blank", rel: "noopener" }, "看原因") : null),
     controlButtons(cur));
 }
 
@@ -686,13 +736,22 @@ function newTopicCard() {
 }
 
 function listView() {
-  const items = DATA.slice(0, SHOW_N).map((d) =>
-    $("a", { class: "item", href: "#/d/" + d.id },
+  const items = DATA.slice(0, SHOW_N).map((d) => {
+    const w = d.winner;
+    const t = d.totals;
+    const sum = t ? t.pro + t.con || 1 : 1;
+    return $("a", { class: "item", href: "#/d/" + d.id },
       $("div", { class: "t" }, d.title),
-      $("div", { class: "m" }, d.time, d.status === "ended" ? winnerSpan(d) : statusPill(d.status),
-        d.split ? $("span", {}, d.split) : d.totals ? $("span", {}, `${d.totals.pro}：${d.totals.con}`) : null,
-        d.rematch ? $("span", {}, "再戰") : null),
-      d.best ? $("div", { class: "bp" }, "「" + d.best.text + "」") : null));
+      $("div", { class: "m" },
+        d.status !== "ended" ? statusPill(d.status)
+          : w ? $("span", { class: "wb", style: "--c:" + (w === "平手" ? "var(--muted)" : color(w)) }, w === "平手" ? "平" : w.slice(0, 1))
+          : $("span", { class: "wb", style: "--c:var(--line)" }, "－"),
+        (d.votes || []).length ? $("span", { class: "vd" }, d.votes.map((v) => $("i", { style: "--c:" + color(v.pick) }))) : null,
+        t ? $("span", { class: "mb" }, $("i", { style: `width:${(t.pro / sum) * 100}%;background:var(--pro)` }),
+          $("i", { style: `width:${(t.con / sum) * 100}%;background:var(--con)` })) : null,
+        d.rematch ? $("span", { class: "rm" }, "再戰") : null,
+        $("span", { class: "dt" }, d.time.slice(5, 10).replace("-", "/"))));
+  });
   const rest = DATA.length - SHOW_N;
   const list = actives();
   const running = list.filter((v) => (v.status === "running" || v.status === "ending") && !isStuck(v)).length;
@@ -703,7 +762,6 @@ function listView() {
       running > 1 ? `（${running} 台機器在跑）` : "", stuckN ? `・卡住 ${stuckN} 場` : "") : null,
     bulkBar(list),
     list.map((v) => activeCard(v)),
-    statsCard(),
     $("div", { class: "card" }, $("h2", { class: "h" }, `所有場次（${DATA.length}）`),
       items.length ? items : $("div", { class: "empty" }, "還沒有任何一場，出個題目開打吧"),
       rest > 0 ? $("button", { class: "btn fold", onclick: () => { SHOW_N += 10; render(); } }, `再顯示 10 場（還有 ${rest} 場）`) : null),
@@ -755,26 +813,6 @@ function rematch(d) {
   if (t) t.focus();
 }
 
-// 戰績：只算正反方賽制的場次
-function statsCard() {
-  const done = DATA.filter((d) => ["正方", "反方", "平手"].includes(d.winner));
-  if (!done.length) return null;
-  const n = (w) => done.filter((d) => d.winner === w).length;
-  const pro = n("正方"), con = n("反方"), tie = n("平手");
-  const scored = done.filter((d) => d.totals && d.totals.n);
-  const avg = (k) => scored.length ? Math.round(scored.reduce((a, d) => a + d.totals[k], 0) / scored.length) : 0;
-  const splits = done.filter((d) => d.split);
-  const sweep = splits.filter((d) => /3：0/.test(d.split)).length;
-  const pct = (x) => Math.round((x / done.length) * 100);
-  return $("div", { class: "card" }, $("h2", { class: "h" }, `戰績（${done.length} 場）`),
-    $("div", { class: "bl" }, $("b", { style: "color:var(--pro)" }, `正方 ${pro} 勝`), $("span", {}, tie ? `平手 ${tie}` : ""), $("b", { style: "color:var(--con)" }, `${con} 勝 反方`)),
-    $("div", { class: "bbar" }, $("i", { style: `width:${pct(pro)}%;background:var(--pro)` }), $("i", { style: `width:${pct(tie)}%;background:var(--muted)` }), $("i", { style: `width:${pct(con)}%;background:var(--con)` })),
-    $("div", { class: "note" }, [
-      `正方勝率 ${pct(pro)}%`,
-      scored.length ? `平均比分 ${avg("pro")}：${avg("con")}` : "",
-      splits.length ? `評審團 ${splits.length} 場中一致通過 ${sweep} 場` : "",
-    ].filter(Boolean).join("・")));
-}
 
 function isBest(d, m) {
   const norm = (t) => String(t).replace(/\*\*/g, "").replace(/\s+/g, "");
@@ -803,10 +841,11 @@ function detailView(id) {
   const status = isCur ? cur.status : d.status;
   const who = [...new Set(d.rounds.flatMap((r) => r.msgs.map((m) => m.who)))];
   const head = $("div", { class: "card" },
-    $("div", { class: "meta" }, d.time, isCur ? "・" + progressText(cur) : null),
+    $("div", { class: "meta" }, d.time),
     $("div", { class: "topic" }, d.title),
     $("div", { class: "roster" }, who.map((n) => $("span", { class: "tag", style: "--c:" + color(n) }, n)),
       status !== "ended" ? statusPill(status) : null),
+    isCur ? stepper(cur) : null,
     scoreboard(d.totals));
   let lastStage = null;
   if (d.raw) {
